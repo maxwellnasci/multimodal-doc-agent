@@ -7,7 +7,7 @@ from streamlit.testing.v1 import AppTest
 
 from doc_agent.app import format_cost
 from doc_agent.pipeline import detect_image_mime
-from doc_agent.samples import render_sample_image
+from doc_agent.samples import _TITLES, _lines, load_sample_font, render_sample_image
 from doc_agent.schemas import CostSource, DocumentType, TokenUsage
 
 APP_PATH = Path(__file__).parents[1] / "src" / "doc_agent" / "app.py"
@@ -18,6 +18,32 @@ def test_sample_images_are_png(doc_type):
     image = render_sample_image(doc_type)
     assert detect_image_mime(image) == "image/png"
     assert image == render_sample_image(doc_type)
+
+
+def _glyph(font, char: str) -> bytes:
+    from PIL import Image, ImageDraw
+
+    image = Image.new("L", (60, 60), 0)
+    ImageDraw.Draw(image).text((10, 5), char, fill=255, font=font)
+    return image.tobytes()
+
+
+@pytest.mark.parametrize("doc_type", [t for t in DocumentType if t is not DocumentType.AUTO])
+def test_sample_font_renders_every_accented_character(doc_type):
+    # Glifo ausente vira sempre o mesmo "tofu"; acentos do PT-BR não podem cair nele.
+    font = load_sample_font(21)
+    tofu = _glyph(font, "\U0010fffd")  # plano privado: inexistente na fonte
+    text = _TITLES[doc_type] + "".join(_lines(doc_type))
+    accented = sorted({c for c in text if not c.isascii()})
+    assert accented  # as amostras usam acentos (Ó, ã, ç, Í...)
+    assert [c for c in accented if _glyph(font, c) == tofu] == []
+
+
+@pytest.mark.parametrize("doc_type", [t for t in DocumentType if t is not DocumentType.AUTO])
+def test_sample_lines_fit_inside_the_frame(doc_type):
+    body, title = load_sample_font(21), load_sample_font(28)
+    assert title.getlength(_TITLES[doc_type]) < 1100 - 60
+    assert max(body.getlength(line) for line in _lines(doc_type)) < 1100 - 80
 
 
 @pytest.fixture

@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import io
 from functools import cache
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from doc_agent.schemas import DocumentType
+
+if TYPE_CHECKING:
+    from PIL.ImageFont import FreeTypeFont
+
+# A fonte embutida do Pillow (load_default) não tem acentos: "Ótica" virava "?tica" na imagem.
+_FONT_PATH = Path(__file__).parent / "assets" / "fonts" / "DejaVuSans.ttf"
 
 # Todos os identificadores são fictícios, mas com dígitos verificadores válidos.
 SAMPLE_PAYLOADS: dict[DocumentType, dict[str, Any]] = {
@@ -112,17 +119,25 @@ def _lines(document_type: DocumentType) -> list[str]:
 
 
 @cache
+def load_sample_font(size: int) -> FreeTypeFont:
+    """DejaVu Sans empacotada com o projeto: mesma renderização em qualquer máquina."""
+    from PIL import ImageFont
+
+    return ImageFont.truetype(str(_FONT_PATH), size)
+
+
+@cache
 def render_sample_image(document_type: DocumentType) -> bytes:
     """Gera um PNG sintético do documento de exemplo (determinístico)."""
     if document_type is DocumentType.AUTO:
         return render_sample_image(DocumentType.INVOICE)
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 
     width, height = 1100, 620
     image = Image.new("RGB", (width, height), "#fbfaf6")
     draw = ImageDraw.Draw(image)
-    title_font = ImageFont.load_default(size=28)
-    body_font = ImageFont.load_default(size=21)
+    title_font = load_sample_font(28)
+    body_font = load_sample_font(21)
 
     draw.rectangle((0, 0, width, 70), fill="#1f3a5f")
     draw.text((30, 20), _TITLES[document_type], fill="white", font=title_font)
