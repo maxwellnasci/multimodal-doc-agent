@@ -6,19 +6,33 @@
 ![NVIDIA Nemotron 3.5 Super VL](https://img.shields.io/badge/NVIDIA-Nemotron%203.5%20Super%20VL-76B900?logo=nvidia&logoColor=white)
 [![Licença MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Agente de extração estruturada de documentos brasileiros — **receitas oftalmológicas**, **CRLV** e
-**notas fiscais** — usando visão multimodal (NVIDIA Nemotron VL via OpenRouter), **Pydantic v2** e
-**guardrails determinísticos**.
+Transforma a **foto de um documento brasileiro** — receita oftalmológica, CRLV ou nota fiscal —
+em **JSON validado**, usando visão multimodal (NVIDIA Nemotron VL via OpenRouter), **Pydantic v2** e
+**guardrails determinísticos** que barram o que o modelo leu errado antes de o dado seguir adiante.
+
+**Destaques**
+
+- **41/41 campos corretos** no benchmark com o modelo real, a **frações de centavo de dólar por
+  documento** (US$ 0,0005–0,0043, custo informado pelo OpenRouter) — [ver benchmark e limites](#benchmark-real-nemotron-35-super-vl-via-openrouter).
+- **Detecção automática do tipo** de documento em uma única chamada (union discriminada).
+- **Validação fiscal de verdade:** dígitos verificadores, CNPJ alfanumérico (NT 2025.001) e
+  validação cruzada da chave NF-e contra os campos do DANFE.
+- **Nada de custo ou dado inventado:** o envelope diz de onde veio o custo e por que um documento
+  precisa de revisão humana.
+- **292 testes sem rede**, CI em Python 3.11–3.13, `ruff` limpo.
 
 ## Arquitetura (Ports & Adapters)
 
 ```
-imagem ─► DocumentPipeline ─► ExtractorClient (porta)
-                │                 ├─ OpenRouterNemotronExtractor  (adapter HTTP)
-                │                 └─ MockExtractorClient          (adapter determinístico)
-                ├─► schema Pydantic  (normaliza datas, R$, dioptrias, placas, CPF/CNPJ)
-                ├─► guardrails       (regex + dígitos verificadores, regras clínicas e fiscais)
-                └─► ExtractionEnvelope (dados + issues + confiança + latência + status)
+imagem ─► DocumentPipeline
+            ├─► validação da imagem   (magic bytes, tamanho) + downscale com orientação EXIF
+            ├─► ExtractorClient (porta)
+            │     ├─ OpenRouterNemotronExtractor  (adapter HTTP: retries, Retry-After, custo somado)
+            │     └─ MockExtractorClient          (adapter determinístico, testes e demo)
+            ├─► roteamento AUTO       ({"document_type", "data"} → schema do tipo detectado)
+            ├─► schema Pydantic       (normaliza datas, R$, quantidades, dioptrias, placas, CPF/CNPJ)
+            ├─► guardrails            (dígitos verificadores, regras clínicas e fiscais, chave NF-e)
+            └─► ExtractionEnvelope    (dados + issues + confiança + status + tokens/custo)
 ```
 
 | Módulo | Responsabilidade |
@@ -53,6 +67,29 @@ As camadas pegam valores **impossíveis ou inconsistentes**. Um valor plausível
 mas errado (um nome trocado, por exemplo), passa por elas; por isso o status `needs_review` e a
 resposta bruta no envelope existem para auditoria.
 
+### Exemplo: um dígito lido errado
+
+O modelo leu o RENAVAM `00639884962` como `00639884961` — um JSON perfeitamente válido. O
+guardrail confere o dígito verificador e o documento vai para revisão em vez de ser aceito.
+Saída do pipeline, resumida, com a leitura errada simulada pelo extrator mock:
+
+```json
+{
+  "document_type": "vehicle_document",
+  "status": "needs_review",
+  "confidence": 0.75,
+  "data": { "plate": "BRA2E19", "renavam": "00639884961", "model_year": 2022, "...": "..." },
+  "issues": [
+    {
+      "field": "renavam",
+      "code": "invalid_renavam",
+      "message": "RENAVAM com dígito verificador inválido",
+      "severity": "error"
+    }
+  ]
+}
+```
+
 ### Validação cruzada da NF-e
 
 A chave de acesso de 44 posições é decomposta (cUF, AAMM, CNPJ/CPF do emitente, modelo, série,
@@ -66,6 +103,16 @@ número) e conferida contra os campos lidos no DANFE:
 
 Qualquer divergência vira erro ou aviso com o valor da chave e o valor lido lado a lado.
 
+## Decisões técnicas
+
+| Decisão | Alternativa descartada | Por quê |
+| --- | --- | --- |
+| **Ports & Adapters** (`ExtractorClient`) | Chamar a API direto no pipeline | Trocar de modelo/provedor sem tocar em schema e guardrails; testes rodam com o mock e com `httpx.MockTransport`, sem rede. |
+| **AUTO como union discriminada** em 1 chamada | Classificar e depois extrair (2 chamadas) | Medido: o schema extra custa ~1.450 tokens de entrada (~US$ 0,00015); a 2ª chamada reenviaria a imagem e dobraria a latência. |
+| **Custo vindo do provedor** (`usage.cost`), com fonte declarada | Tabela de preços fixa no código | A tabela erra quando o modelo ou o roteamento muda — no benchmark, uma chamada custou 3× o preço de tabela. Sem dado, o custo é `None`, não um chute. |
+| **Guardrails determinísticos** | Pedir ao LLM que confira a própria saída | Dígito verificador e soma de itens são regras exatas: mais baratas, reprodutíveis e testáveis que uma segunda opinião do modelo. |
+| **Tokens de novas tentativas somados** | Contar só a resposta final | Tentativas com `finish_reason=error` também são cobradas; o envelope de falha mostra o custo real. |
+
 ## Uso
 
 ```bash
@@ -73,7 +120,9 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 
 streamlit run src/doc_agent/app.py        # demo (mock por padrão)
-export OPENROUTER_API_KEY=sk-or-...       # habilita o Nemotron real
+
+cp .env.example .env                       # preencha OPENROUTER_API_KEY
+set -a && source .env && set +a            # o projeto lê variáveis de ambiente, não o arquivo
 ```
 
 ```python
@@ -90,7 +139,7 @@ O modelo padrão é `nvidia/nemotron-3.5-super-vl` e pode ser trocado via `DOC_A
 
 **Custo (FinOps):** `envelope.usage.estimated_cost_usd` vem do `usage.cost` que o OpenRouter
 devolve em toda resposta (`cost_source="provider"`). Para provedores que não informam custo,
-passe os preços do modelo: `DocumentPipeline(extractor, pricing=ModelPricing(0.30, 0.80))`
+passe os preços do modelo: `DocumentPipeline(extractor, pricing=ModelPricing(0.10, 0.40))`
 (USD por 1M de tokens de entrada/saída, `cost_source="estimated"`). Sem nenhum dos dois, o
 custo fica `None` (`cost_source="unknown"`) em vez de um valor inventado.
 
@@ -141,6 +190,15 @@ A suíte roda sem rede (o OpenRouter é simulado com `httpx.MockTransport`). O
 3.12 e 3.13 a cada push na `main` e em todo pull request. O benchmark pago não roda no CI.
 
 Todos os dados de exemplo são fictícios (com dígitos verificadores válidos).
+
+## Limitações e próximos passos
+
+- **Fotos reais:** o benchmark usa imagens sintéticas e limpas. O próximo passo é um conjunto de
+  fotos reais anonimizadas (inclinação, sombra, reflexo) para medir precisão por campo.
+- **Variância de custo:** os tokens de saída variam muito entre execuções da mesma imagem; vale
+  testar o controle de raciocínio do modelo (`reasoning` no OpenRouter) contra precisão e latência.
+- **Valores plausíveis e errados** (um nome trocado) passam pelos guardrails; para esses casos o
+  caminho é revisão humana guiada pelo status `needs_review`.
 
 ## Licença
 
