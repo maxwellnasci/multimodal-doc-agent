@@ -206,7 +206,8 @@ class DocumentPipeline:
             return failure(
                 [_issue("image", "extractor_error", str(exc))],
                 usage=build_token_usage(
-                    None,
+                    exc.usage,
+                    pricing=self._pricing,
                     image_bytes_original=len(image),
                     image_bytes_sent=len(processed_image),
                 ),

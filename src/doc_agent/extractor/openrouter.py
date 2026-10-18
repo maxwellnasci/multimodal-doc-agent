@@ -22,6 +22,8 @@ from doc_agent.schemas import DocumentType
 DEFAULT_MODEL = "nvidia/nemotron-3.5-super-vl"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+# Campos de `usage` somados entre tentativas: toda resposta HTTP 200 pode ter sido cobrada.
+_SUMMED_USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens", "cost")
 
 
 class OpenRouterNemotronExtractor(ExtractorClient):
@@ -78,7 +80,14 @@ class OpenRouterNemotronExtractor(ExtractorClient):
     def extract(
         self, image: bytes, mime_type: str, document_type: DocumentType
     ) -> ExtractionResult:
-        body = self._post(self.build_request(image, mime_type, document_type))
+        body, usage = self._post(self.build_request(image, mime_type, document_type))
+        try:
+            return self._build_result(body, usage)
+        except ExtractorError as exc:
+            exc.usage = usage  # a resposta chegou (e foi cobrada) mesmo sem JSON utilizável
+            raise
+
+    def _build_result(self, body: dict[str, Any], usage: dict[str, Any]) -> ExtractionResult:
         try:
             content = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
@@ -91,16 +100,18 @@ class OpenRouterNemotronExtractor(ExtractorClient):
             payload=parse_json_payload(content),
             model=body.get("model", self.model_name),
             raw_text=content,
-            usage=body.get("usage") or {},
+            usage=usage,
         )
 
-    def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Envia com retry; devolve o corpo final e o `usage` somado de todas as tentativas."""
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "X-Title": "multimodal-doc-agent",
         }
         last_error: Exception | None = None
         retry_after_delay: float | None = None
+        usage: dict[str, Any] = {}
         for attempt in range(self._max_retries + 1):
             if attempt:
                 delay = (
@@ -119,12 +130,13 @@ class OpenRouterNemotronExtractor(ExtractorClient):
                 continue
             if response.is_error:
                 raise ExtractorError(
-                    f"OpenRouter HTTP {response.status_code}: {response.text[:300]}"
+                    f"OpenRouter HTTP {response.status_code}: {response.text[:300]}", usage=usage
                 )
             try:
                 body = response.json()
             except ValueError as exc:
-                raise ExtractorError("OpenRouter retornou corpo não-JSON") from exc
+                raise ExtractorError("OpenRouter retornou corpo não-JSON", usage=usage) from exc
+            _add_usage(usage, body)
             if isinstance(body, dict) and "error" in body:
                 err = body["error"]
                 code = err.get("code") if isinstance(err, dict) else None
@@ -136,12 +148,24 @@ class OpenRouterNemotronExtractor(ExtractorClient):
                 if code_int is None or code_int in RETRYABLE_STATUS or code_int >= 500:
                     last_error = ExtractorError(f"OpenRouter erro upstream ({code}): {msg}")
                     continue
-                raise ExtractorError(f"OpenRouter HTTP {code_int}: {msg}")
+                raise ExtractorError(f"OpenRouter HTTP {code_int}: {msg}", usage=usage)
             if _has_finish_reason_error(body):
                 last_error = ExtractorError("OpenRouter retornou finish_reason=error")
                 continue
-            return body
-        raise ExtractorError(f"falha após {self._max_retries + 1} tentativas: {last_error}")
+            return body, usage
+        raise ExtractorError(
+            f"falha após {self._max_retries + 1} tentativas: {last_error}", usage=usage
+        )
+
+
+def _add_usage(total: dict[str, Any], body: Any) -> None:
+    usage = body.get("usage") if isinstance(body, dict) else None
+    if not isinstance(usage, dict):
+        return
+    for key in _SUMMED_USAGE_KEYS:
+        value = usage.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            total[key] = total.get(key, 0) + value
 
 
 def _parse_retry_after(value: str | None) -> float | None:

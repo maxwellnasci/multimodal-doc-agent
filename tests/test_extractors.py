@@ -16,7 +16,7 @@ from doc_agent.extractor import (
 from doc_agent.extractor.prompts import build_user_prompt, infer_document_type, parse_json_payload
 from doc_agent.pipeline import DocumentPipeline, ModelPricing
 from doc_agent.samples import SAMPLE_PAYLOADS, render_sample_image
-from doc_agent.schemas import CostSource, DocumentType
+from doc_agent.schemas import CostSource, DocumentType, ExtractionStatus
 
 # --- Mock ----------------------------------------------------------------------------------
 
@@ -271,3 +271,75 @@ def test_openrouter_cost_reaches_envelope_as_provider_cost():
     assert usage.cost_source is CostSource.PROVIDER
     assert usage.estimated_cost_usd == pytest.approx(0.000417)
     assert usage.total_tokens == 1290
+
+
+def billed(content, cost, finish_reason="stop"):
+    body = completion(content, finish_reason=finish_reason)
+    body["usage"] = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 100,
+        "total_tokens": 1100,
+        "cost": cost,
+    }
+    return body
+
+
+def test_openrouter_sums_usage_of_billed_retries(png_bytes):
+    responses = iter(
+        [
+            httpx.Response(503),  # sem corpo: nada cobrado
+            httpx.Response(200, json=billed('{"a": 1}', 0.0002, finish_reason="error")),
+            httpx.Response(200, json=billed('{"a": 1}', 0.0003)),
+        ]
+    )
+    result = make_extractor(lambda r: next(responses)).extract(
+        png_bytes, "image/png", DocumentType.INVOICE
+    )
+    assert result.payload == {"a": 1}
+    assert result.usage == {
+        "prompt_tokens": 2000,
+        "completion_tokens": 200,
+        "total_tokens": 2200,
+        "cost": pytest.approx(0.0005),
+    }
+
+
+def test_openrouter_error_carries_usage_when_retries_are_exhausted(png_bytes):
+    def handler(request):
+        return httpx.Response(200, json=billed("", 0.0002, finish_reason="error"))
+
+    with pytest.raises(ExtractorError, match="3 tentativas") as exc_info:
+        make_extractor(handler).extract(png_bytes, "image/png", DocumentType.INVOICE)
+    assert exc_info.value.usage["total_tokens"] == 3300
+    assert exc_info.value.usage["cost"] == pytest.approx(0.0006)
+
+
+def test_openrouter_error_carries_usage_when_billed_response_is_unusable(png_bytes):
+    def handler(request):
+        return httpx.Response(200, json=billed("não é json", 0.0004))
+
+    with pytest.raises(ExtractorError, match="JSON") as exc_info:
+        make_extractor(handler).extract(png_bytes, "image/png", DocumentType.INVOICE)
+    assert exc_info.value.usage["cost"] == pytest.approx(0.0004)
+
+
+def test_openrouter_unbilled_failures_carry_empty_usage(png_bytes):
+    def handler(request):
+        raise httpx.ConnectError("offline", request=request)
+
+    with pytest.raises(ExtractorError) as exc_info:
+        make_extractor(handler).extract(png_bytes, "image/png", DocumentType.INVOICE)
+    assert exc_info.value.usage == {}
+
+
+def test_failed_extraction_still_reports_billed_cost_in_envelope():
+    def handler(request):
+        return httpx.Response(200, json=billed("não é json", 0.0004))
+
+    envelope = DocumentPipeline(make_extractor(handler)).run(
+        render_sample_image(DocumentType.INVOICE), DocumentType.INVOICE
+    )
+    assert envelope.status is ExtractionStatus.FAILED
+    assert envelope.usage.cost_source is CostSource.PROVIDER
+    assert envelope.usage.estimated_cost_usd == pytest.approx(0.0004)
+    assert envelope.usage.total_tokens == 1100

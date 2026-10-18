@@ -10,7 +10,14 @@ from doc_agent.schemas import DocumentType
 
 
 class ExtractorError(RuntimeError):
-    """Falha ao obter ou interpretar a resposta do modelo."""
+    """Falha ao obter ou interpretar a resposta do modelo.
+
+    `usage` traz os tokens/custo já cobrados até a falha (ex.: tentativas anteriores).
+    """
+
+    def __init__(self, message: str, *, usage: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.usage: dict[str, Any] = usage or {}
 
 
 class ExtractorConfigError(ExtractorError):
