@@ -49,8 +49,11 @@ def parse_br_date(value: Any) -> Any:
     return text  # deixa o Pydantic acusar o erro
 
 
-def parse_br_number(value: Any) -> Any:
-    """Converte "R$ 1.234,56" / "R$ 1.200" / "+1,25" / 3.5 em Decimal finito."""
+def parse_br_number(value: Any, *, bare_thousands: bool = True) -> Any:
+    """Converte "R$ 1.234,56" / "R$ 1.200" / "+1,25" / 3.5 em Decimal finito.
+
+    Com `bare_thousands=False`, "1.500" é lido como decimal (1.5) e não como milhar.
+    """
     value = _blank_to_none(value)
     if value is None or isinstance(value, bool):
         return value
@@ -72,7 +75,7 @@ def parse_br_number(value: Any) -> Any:
         return value
     if "," in text:
         text = text.replace(".", "").replace(",", ".")
-    elif _BR_THOUSANDS_RE.fullmatch(text):
+    elif bare_thousands and _BR_THOUSANDS_RE.fullmatch(text):
         text = text.replace(".", "")
     try:
         number = Decimal(text)
@@ -81,6 +84,11 @@ def parse_br_number(value: Any) -> Any:
     if not number.is_finite():
         raise ValueError("número deve ser finito")
     return number
+
+
+def parse_quantity(value: Any) -> Any:
+    """Quantidades (qCom da NF-e têm até 4 casas): ponto sem vírgula é separador decimal."""
+    return parse_br_number(value, bare_thousands=False)
 
 
 def parse_diopter(value: Any) -> Any:
@@ -130,6 +138,11 @@ BRDate = Annotated[date | None, BeforeValidator(parse_br_date)]
 Money = Annotated[
     Decimal | None,
     BeforeValidator(parse_br_number),
+    PlainSerializer(float, return_type=float, when_used="json-unless-none"),
+]
+Quantity = Annotated[
+    Decimal | None,
+    BeforeValidator(parse_quantity),
     PlainSerializer(float, return_type=float, when_used="json-unless-none"),
 ]
 Diopter = Annotated[float | None, BeforeValidator(parse_diopter)]

@@ -88,11 +88,15 @@ def test_cpf(cpf, valid):
         ("12.ABC.345/01DE-36", False),
         ("00.000.000/0000-00", False),
         ("AAAAAAAAAAAA45", False),  # raiz repetida alfanumérica
-        ("12.IBC.345/01DE-00", False),  # letra proibida I (IN RFB 2.229/2024)
-        ("12.OBC.345/01DE-00", False),  # letra proibida O
-        ("12.UBC.345/01DE-00", False),  # letra proibida U
-        ("12.QBC.345/01DE-00", False),  # letra proibida Q
-        ("12.FBC.345/01DE-00", False),  # letra proibida F
+        # Qualquer letra A-Z é aceita na raiz/ordem (DV = ASCII - 48), inclusive I/O/U/Q/F/S.
+        ("12.IBC.345/01DE-10", True),
+        ("12.OBC.345/01DE-50", True),
+        ("12.UBC.345/01DE-91", True),
+        ("12.QBC.345/01DE-02", True),
+        ("12.FBC.345/01DE-02", True),
+        ("12.SBC.345/01DE-48", True),
+        ("12.SBC.345/01DE-49", False),
+        ("12.ÇBC.345/01DE-00", False),  # fora de [0-9A-Z]
         ("12ABC34501DEAB", False),  # DVs devem ser numéricos
         (None, False),
     ],

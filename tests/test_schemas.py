@@ -12,6 +12,7 @@ from doc_agent.schemas import (
     DocumentType,
     EyePrescription,
     InvoiceData,
+    InvoiceItem,
     PrescriptionData,
     VehicleDocumentData,
 )
@@ -80,6 +81,34 @@ def test_invoice_parses_money_and_items(invoice_payload):
 )
 def test_money_parsing(raw, expected):
     assert InvoiceData(total_amount=raw).total_amount == Decimal(expected)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("1.500", "1.500"),  # qCom com 3 casas, não milhar
+        ("0.250", "0.250"),
+        ("1,5", "1.5"),
+        ("1.500,0000", "1500.0000"),
+        ("2", "2"),
+        (3.75, "3.75"),
+    ],
+)
+def test_quantity_parsing_treats_bare_dot_as_decimal(raw, expected):
+    assert InvoiceItem(quantity=raw).quantity == Decimal(expected)
+
+
+def test_money_keeps_bare_thousands_while_quantity_does_not():
+    item = InvoiceItem(quantity="1.200", unit_price="R$ 1.200", total="1.440")
+    assert item.quantity == Decimal("1.2")
+    assert item.unit_price == Decimal("1200")
+    assert item.total == Decimal("1440")
+
+
+@pytest.mark.parametrize("invalid_qty", [float("nan"), "Infinity", Decimal("-Inf")])
+def test_non_finite_quantity_rejected(invalid_qty):
+    with pytest.raises(ValidationError):
+        InvoiceItem(quantity=invalid_qty)
 
 
 @pytest.mark.parametrize(

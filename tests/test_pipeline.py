@@ -98,6 +98,27 @@ def test_preprocess_image_downscales_large_images():
         assert img.mode == "RGB"
 
 
+@pytest.mark.parametrize(("orientation", "expected_size"), [(6, (533, 1600)), (8, (533, 1600))])
+def test_preprocess_image_applies_exif_orientation_before_downscale(orientation, expected_size):
+    # Foto de celular: pixels em paisagem + tag EXIF mandando girar 90° (retrato).
+    photo = Image.new("RGB", (3000, 1000), "white")
+    photo.paste((255, 0, 0), (0, 0, 300, 1000))  # faixa vermelha na borda esquerda
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    buf = io.BytesIO()
+    photo.save(buf, format="JPEG", exif=exif)
+
+    out, mime = preprocess_image(buf.getvalue(), "image/jpeg")
+    assert mime == "image/jpeg"
+    with Image.open(io.BytesIO(out)) as img:
+        assert img.size == expected_size
+        assert img.getexif().get(0x0112) is None  # orientação já aplicada aos pixels
+        top_or_bottom = (img.width // 2, 5 if orientation == 6 else img.height - 5)
+        red, green, _ = img.convert("RGB").getpixel(top_or_bottom)
+        assert red > 200
+        assert green < 80
+
+
 def test_build_token_usage_calculates_cost():
     usage = build_token_usage(
         {"prompt_tokens": 1000, "completion_tokens": 500},

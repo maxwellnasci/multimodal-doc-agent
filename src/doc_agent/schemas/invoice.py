@@ -13,12 +13,13 @@ from doc_agent.schemas.common import (
     DocumentNumber,
     Money,
     OptionalStr,
+    Quantity,
 )
 
 
 class InvoiceItem(DocumentModel):
     description: OptionalStr = Field(default=None, description="Descrição do produto/serviço")
-    quantity: Money = Field(default=None, description="Quantidade")
+    quantity: Quantity = Field(default=None, description="Quantidade")
     unit_price: Money = Field(default=None, description="Valor unitário em R$")
     total: Money = Field(default=None, description="Valor total do item em R$")
 

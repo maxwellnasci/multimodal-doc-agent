@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import ValidationError
 
 from doc_agent.extractor import ExtractorClient, ExtractorError
@@ -69,7 +69,9 @@ def preprocess_image(
             width, height = img.size
             if max(width, height) <= max_dimension:
                 return image, mime_type
-            resized = img.copy()
+            # Aplica a orientação EXIF nos pixels: o re-encode abaixo descarta o EXIF e
+            # fotos de celular chegariam deitadas ao modelo.
+            resized = ImageOps.exif_transpose(img)
     except Exception:
         return image, mime_type
 

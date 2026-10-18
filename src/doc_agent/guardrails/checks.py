@@ -107,12 +107,15 @@ def _check_nfe_key_consistency(data: InvoiceData) -> list[GuardrailIssue]:
     if key_info is None:
         return []
     issues: list[GuardrailIssue] = []
-    if data.issuer_document and data.issuer_document != key_info.issuer_cnpj:
+    issuer = data.issuer_document
+    # Emitente pessoa física (ex.: produtor rural): a chave traz "000" + CPF no campo do CNPJ.
+    expected_key_doc = f"000{issuer}" if issuer and len(issuer) == 11 else issuer
+    if issuer and expected_key_doc != key_info.issuer_cnpj:
         issues.append(
             _error(
                 "access_key",
                 "access_key_cnpj_mismatch",
-                f"CNPJ na chave ({key_info.issuer_cnpj}) != emitente ({data.issuer_document})",
+                f"CNPJ/CPF na chave ({key_info.issuer_cnpj}) != emitente ({issuer})",
             )
         )
     if data.issue_date is not None:

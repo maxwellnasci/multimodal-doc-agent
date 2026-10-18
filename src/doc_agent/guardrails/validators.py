@@ -13,8 +13,8 @@ LEGACY_PLATE_RE = re.compile(r"^[A-Z]{3}-?[0-9]{4}$")
 VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 RENAVAM_RE = re.compile(r"^[0-9]{11}$")
 CPF_RE = re.compile(r"^[0-9]{11}$")
-# CNPJ alfanumérico (IN RFB 2.229/2024): 12 posições sem I, O, U, Q e F + 2 DVs numéricos.
-CNPJ_RE = re.compile(r"^[0-9A-EG-HJ-NP-RT-Z]{12}[0-9]{2}$")
+# CNPJ alfanumérico (IN RFB 2.229/2024): 12 posições [0-9A-Z] + 2 DVs numéricos.
+CNPJ_RE = re.compile(r"^[0-9A-Z]{12}[0-9]{2}$")
 NFE_KEY_RE = re.compile(r"^[0-9]{44}$")
 
 DIOPTER_STEP = Decimal("0.25")

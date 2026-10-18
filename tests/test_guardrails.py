@@ -165,6 +165,25 @@ def test_invoice_access_key_cross_validation_mismatches(invoice_payload):
     }
 
 
+def _nfe_key(issuer_field: str) -> str:
+    """Chave NF-e com DV válido: SP, 10/2026, modelo 55, série 1, nNF 12345."""
+    base = f"352610{issuer_field}55001000012345100012345"
+    total = sum(int(d) * (2 + i % 8) for i, d in enumerate(reversed(base)))
+    remainder = total % 11
+    return base + str(0 if remainder < 2 else 11 - remainder)
+
+
+def test_invoice_rural_producer_cpf_matches_zero_padded_key(invoice_payload):
+    invoice_payload.update(issuer_document="529.982.247-25", access_key=_nfe_key("00052998224725"))
+    assert run_guardrails(InvoiceData.model_validate(invoice_payload)) == []
+
+
+def test_invoice_rural_producer_cpf_mismatch_is_flagged(invoice_payload):
+    invoice_payload.update(issuer_document="529.982.247-25", access_key=_nfe_key("00011144477735"))
+    issues = run_guardrails(InvoiceData.model_validate(invoice_payload))
+    assert codes(issues) == {("access_key", "access_key_cnpj_mismatch")}
+
+
 def test_invoice_missing_total_and_items():
     assert codes(run_guardrails(InvoiceData())) == {("total_amount", "missing_field")}
     assert codes(run_guardrails(InvoiceData(total_amount="10"))) == {("items", "missing_items")}
