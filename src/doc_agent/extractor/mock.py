@@ -20,9 +20,14 @@ class MockExtractorClient(ExtractorClient):
         responses: Mapping[DocumentType, dict[str, Any]] | None = None,
         *,
         error: Exception | None = None,
+        auto_type: DocumentType = DocumentType.INVOICE,
     ) -> None:
+        if auto_type is DocumentType.AUTO:
+            raise ValueError("auto_type deve ser um tipo concreto")
         self._responses = {**SAMPLE_PAYLOADS, **(responses or {})}
         self._error = error
+        # O mock não enxerga a imagem: no modo AUTO, "detecta" sempre este tipo.
+        self._auto_type = auto_type
         self.calls: list[tuple[DocumentType, str, int]] = []
 
     def extract(
@@ -32,17 +37,10 @@ class MockExtractorClient(ExtractorClient):
         if self._error is not None:
             raise self._error
         if document_type is DocumentType.AUTO and DocumentType.AUTO not in self._responses:
-            from doc_agent.samples import render_sample_image
-
-            resolved = DocumentType.INVOICE
-            for candidate in SAMPLE_PAYLOADS:
-                if image == render_sample_image(candidate):
-                    resolved = candidate
-                    break
             # Mesmo formato pedido ao modelo real pela union discriminada do modo AUTO.
             payload = {
-                "document_type": resolved.value,
-                "data": copy.deepcopy(self._responses[resolved]),
+                "document_type": self._auto_type.value,
+                "data": copy.deepcopy(self._responses[self._auto_type]),
             }
         else:
             payload = copy.deepcopy(self._responses[document_type])

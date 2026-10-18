@@ -130,9 +130,8 @@ def is_valid_nfe_access_key(key: str | None) -> bool:
 
 def parse_nfe_access_key(key: str | None) -> NFeAccessKeyInfo | None:
     """Decompõe as 44 posições da chave NF-e (cUF, AAMM, CNPJ, mod, série, nNF)."""
-    if not is_valid_nfe_access_key(key):
+    if key is None or not is_valid_nfe_access_key(key):
         return None
-    assert key is not None
     digits = _clean(key)
     return NFeAccessKeyInfo(
         uf_code=digits[0:2],

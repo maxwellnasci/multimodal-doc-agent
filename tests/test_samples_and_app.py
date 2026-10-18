@@ -58,6 +58,20 @@ def test_format_cost_distinguishes_cost_source(cost, source, expected):
     assert format_cost(TokenUsage(estimated_cost_usd=cost, cost_source=source)) == expected
 
 
+def test_app_hides_previous_result_when_switching_to_auto(app):
+    app.sidebar.selectbox[0].select(DocumentType.VEHICLE).run()
+    app.button[0].click().run()
+    assert app.metric  # resultado do CRLV na tela
+
+    app.sidebar.selectbox[0].select(DocumentType.AUTO).run()
+    assert not app.exception
+    assert not app.metric  # não reaproveita o resultado de outro tipo
+
+    app.button[0].click().run()
+    assert app.metric
+    assert app.session_state["envelope"].document_type is DocumentType.INVOICE
+
+
 def test_app_openrouter_without_key_shows_error(app):
     app.sidebar.radio[0].set_value("OpenRouter · Nemotron VL").run()
     app.button[0].click().run()

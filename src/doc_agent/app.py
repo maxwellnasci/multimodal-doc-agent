@@ -159,10 +159,12 @@ def main() -> None:
                         st.session_state["envelope"] = DocumentPipeline(extractor).run(
                             image, document_type
                         )
+                        # Guarda o tipo pedido: com AUTO, envelope.document_type é o detectado.
+                        st.session_state["requested_type"] = document_type
                     finally:
                         extractor.close()
         envelope = st.session_state.get("envelope")
-        if envelope is not None and document_type in (envelope.document_type, DocumentType.AUTO):
+        if envelope is not None and st.session_state.get("requested_type") is document_type:
             render_result(envelope)
 
 

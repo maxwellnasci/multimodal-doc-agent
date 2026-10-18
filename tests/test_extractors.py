@@ -170,13 +170,29 @@ def test_resolve_auto_payload(payload, expected_type, expected_data):
     assert data == expected_data
 
 
-def test_mock_auto_returns_discriminated_payload():
-    image = render_sample_image(DocumentType.VEHICLE)
-    payload = MockExtractorClient().extract(image, "image/png", DocumentType.AUTO).payload
+def test_mock_auto_returns_discriminated_payload(png_bytes):
+    mock = MockExtractorClient(auto_type=DocumentType.VEHICLE)
+    payload = mock.extract(png_bytes, "image/png", DocumentType.AUTO).payload
     assert payload == {
         "document_type": "vehicle_document",
         "data": SAMPLE_PAYLOADS[DocumentType.VEHICLE],
     }
+
+
+def test_mock_auto_type_does_not_depend_on_image_bytes():
+    # Antes o tipo vinha da comparação com as amostras: qualquer mudança no
+    # pré-processamento fazia o mock cair em INVOICE silenciosamente.
+    mock = MockExtractorClient(auto_type=DocumentType.PRESCRIPTION)
+    for image in (render_sample_image(DocumentType.VEHICLE), b"qualquer coisa"):
+        payload = mock.extract(image, "image/png", DocumentType.AUTO).payload
+        assert payload["document_type"] == "prescription"
+    default = MockExtractorClient().extract(b"x", "image/png", DocumentType.AUTO).payload
+    assert default["document_type"] == "invoice"  # casa com a amostra AUTO do app
+
+
+def test_mock_rejects_auto_as_auto_type():
+    with pytest.raises(ValueError, match="concreto"):
+        MockExtractorClient(auto_type=DocumentType.AUTO)
 
 
 # --- OpenRouter ----------------------------------------------------------------------------

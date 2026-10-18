@@ -55,19 +55,16 @@ def _check_eye(prefix: str, eye: EyePrescription) -> list[GuardrailIssue]:
     return issues
 
 
-def _is_empty_eye(eye: EyePrescription | None) -> bool:
-    return eye is None or all(
-        getattr(eye, attr) is None for attr in ("sphere", "cylinder", "axis", "addition")
-    )
+def _is_empty_eye(eye: EyePrescription) -> bool:
+    return all(getattr(eye, attr) is None for attr in ("sphere", "cylinder", "axis", "addition"))
 
 
 def check_prescription(data: PrescriptionData) -> list[GuardrailIssue]:
     issues: list[GuardrailIssue] = []
     for prefix, eye in (("od", data.od), ("oe", data.oe)):
-        if _is_empty_eye(eye):
+        if eye is None or _is_empty_eye(eye):
             issues.append(_warning(prefix, "missing_eye", f"grau do {prefix.upper()} ausente"))
         else:
-            assert eye is not None
             issues.extend(_check_eye(prefix, eye))
     if data.issue_date and data.issue_date > date.today():
         issues.append(_warning("issue_date", "future_date", "data de emissão no futuro"))

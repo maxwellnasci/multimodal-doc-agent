@@ -187,14 +187,13 @@ class DocumentPipeline:
         def failure(issues: list[GuardrailIssue], **kwargs: object) -> ExtractionEnvelope:
             return envelope(status=ExtractionStatus.FAILED, confidence=0.0, issues=issues, **kwargs)
 
-        input_issue = self._validate_image(image)
-        if input_issue is not None:
+        checked = self._validate_image(image)
+        if isinstance(checked, GuardrailIssue):
             return failure(
-                [input_issue],
+                [checked],
                 usage=build_token_usage(None, image_bytes_original=len(image), image_bytes_sent=0),
             )
-        mime_type = detect_image_mime(image)
-        assert mime_type is not None  # garantido por _validate_image
+        mime_type = checked
 
         processed_image, mime_type = preprocess_image(
             image, mime_type, max_dimension=self._max_image_dimension
@@ -267,15 +266,17 @@ class DocumentPipeline:
             raw_response=result.payload,
         )
 
-    def _validate_image(self, image: bytes) -> GuardrailIssue | None:
+    def _validate_image(self, image: bytes) -> str | GuardrailIssue:
+        """Devolve o MIME detectado ou o problema que impede o envio ao extrator."""
         if not image:
             return _issue("image", "empty_image", "imagem vazia")
         if len(image) > self._max_image_bytes:
             limit_mb = self._max_image_bytes / 1024 / 1024
             return _issue("image", "image_too_large", f"imagem excede {limit_mb:.0f} MB")
-        if detect_image_mime(image) is None:
+        mime_type = detect_image_mime(image)
+        if mime_type is None:
             return _issue("image", "unsupported_image", "formato não suportado (PNG/JPEG/WEBP/GIF)")
-        return None
+        return mime_type
 
 
 def _issue(field: str, code: str, message: str) -> GuardrailIssue:

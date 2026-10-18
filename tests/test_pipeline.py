@@ -69,8 +69,8 @@ def test_happy_path_for_every_document_type(doc_type):
         (DocumentType.INVOICE, InvoiceData),
     ],
 )
-def test_auto_detects_each_document_type_from_sample(sample_type, expected_cls):
-    pipeline = DocumentPipeline(MockExtractorClient())
+def test_auto_resolves_each_document_type(sample_type, expected_cls):
+    pipeline = DocumentPipeline(MockExtractorClient(auto_type=sample_type))
     envelope = pipeline.run(render_sample_image(sample_type), DocumentType.AUTO)
     assert envelope.status is ExtractionStatus.OK
     assert envelope.document_type is sample_type
