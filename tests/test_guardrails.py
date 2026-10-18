@@ -65,6 +65,12 @@ def test_prescription_missing_eye_and_future_date(prescription_payload):
     assert codes(issues) == {("oe", "missing_eye"), ("issue_date", "future_date")}
 
 
+def test_prescription_empty_eye_object_is_flagged_as_missing(prescription_payload):
+    prescription_payload["od"] = {"sphere": None, "cylinder": None, "axis": None, "addition": None}
+    issues = run_guardrails(PrescriptionData.model_validate(prescription_payload))
+    assert codes(issues) == {("od", "missing_eye")}
+
+
 # --- CRLV ----------------------------------------------------------------------------------
 
 
@@ -140,6 +146,22 @@ def test_invoice_invalid_documents_and_key(invoice_payload):
         ("issuer_document", "invalid_tax_id"),
         ("recipient_document", "invalid_tax_id"),
         ("access_key", "invalid_access_key"),
+    }
+
+
+def test_invoice_access_key_cross_validation_mismatches(invoice_payload):
+    invoice_payload.update(
+        issuer_document="12.ABC.345/01DE-35",  # válido, mas difere da chave (11222333000181)
+        issue_date="10/11/2026",  # AAMM 2611 != 2610 na chave
+        invoice_number="99999",  # != 12345 na chave
+        series="2",  # != 1 na chave
+    )
+    issues = run_guardrails(InvoiceData.model_validate(invoice_payload))
+    assert codes(issues) == {
+        ("access_key", "access_key_cnpj_mismatch"),
+        ("access_key", "access_key_date_mismatch"),
+        ("access_key", "access_key_number_mismatch"),
+        ("access_key", "access_key_series_mismatch"),
     }
 
 

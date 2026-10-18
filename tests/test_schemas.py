@@ -67,10 +67,30 @@ def test_invoice_parses_money_and_items(invoice_payload):
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
-    [("R$ 1.234,56", "1234.56"), ("10,5", "10.5"), ("99.90", "99.90"), (12.3, "12.3"), (7, "7")],
+    [
+        ("R$ 1.234,56", "1234.56"),
+        ("R$ 1.200", "1200"),
+        ("1.000.000", "1000000"),
+        ("10,5", "10.5"),
+        ("99.90", "99.90"),
+        (12.3, "12.3"),
+        (7, "7"),
+        (Decimal("42.50"), "42.50"),
+    ],
 )
 def test_money_parsing(raw, expected):
     assert InvoiceData(total_amount=raw).total_amount == Decimal(expected)
+
+
+@pytest.mark.parametrize(
+    "invalid_num",
+    [float("nan"), float("inf"), float("-inf"), "NaN", "Infinity", Decimal("NaN"), Decimal("Inf")],
+)
+def test_non_finite_numbers_rejected(invalid_num):
+    with pytest.raises(ValidationError):
+        InvoiceData(total_amount=invalid_num)
+    with pytest.raises(ValidationError):
+        EyePrescription(sphere=invalid_num)
 
 
 def test_money_serializes_as_number_in_json(invoice_payload):
@@ -90,10 +110,17 @@ def test_date_formats(raw):
     assert InvoiceData(issue_date=raw).issue_date == date(2026, 10, 18)
 
 
-def test_blank_strings_become_none():
-    data = PrescriptionData(patient_name="   ", issue_date="")
+def test_blank_and_punctuation_only_strings_become_none():
+    data = PrescriptionData(patient_name="   ", issue_date="", od={"axis": "°"})
     assert data.patient_name is None
     assert data.issue_date is None
+    assert data.od is not None
+    assert data.od.axis is None
+
+    vehicle = VehicleDocumentData(plate="---", owner_document="../-", renavam="N/A")
+    assert vehicle.plate is None
+    assert vehicle.owner_document is None
+    assert vehicle.renavam is None
 
 
 def test_extra_keys_are_ignored():
@@ -101,10 +128,14 @@ def test_extra_keys_are_ignored():
     assert not hasattr(data, "confidence")
 
 
-@pytest.mark.parametrize("doc_type", list(DocumentType))
+@pytest.mark.parametrize("doc_type", list(SCHEMA_BY_TYPE))
 def test_every_type_has_schema_and_json_schema(doc_type):
     schema = SCHEMA_BY_TYPE[doc_type]
     json_schema = schema.model_json_schema()
     assert json_schema["type"] == "object"
     for path in schema.critical_fields:
         assert path.split(".")[0] in json_schema["properties"]
+
+
+def test_document_type_includes_auto():
+    assert DocumentType.AUTO == "auto"

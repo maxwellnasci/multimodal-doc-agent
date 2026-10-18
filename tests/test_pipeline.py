@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import io
 import json
 from itertools import count
 
 import pytest
+from PIL import Image
 
 from doc_agent.extractor import ExtractorError, MockExtractorClient
-from doc_agent.pipeline import DocumentPipeline, completeness, detect_image_mime, score_confidence
+from doc_agent.pipeline import (
+    DocumentPipeline,
+    build_token_usage,
+    completeness,
+    detect_image_mime,
+    preprocess_image,
+    score_confidence,
+)
 from doc_agent.samples import render_sample_image
 from doc_agent.schemas import (
     DocumentType,
@@ -23,6 +32,7 @@ EXPECTED_SCHEMA = {
     DocumentType.PRESCRIPTION: PrescriptionData,
     DocumentType.VEHICLE: VehicleDocumentData,
     DocumentType.INVOICE: InvoiceData,
+    DocumentType.AUTO: InvoiceData,
 }
 
 
@@ -42,7 +52,65 @@ def test_happy_path_for_every_document_type(doc_type):
     assert isinstance(envelope.data, EXPECTED_SCHEMA[doc_type])
     assert envelope.latency_ms == 125.0
     assert envelope.model == "mock/deterministic"
+    assert envelope.usage.total_tokens == 330
+    assert envelope.usage.estimated_cost_usd > 0
     assert envelope.raw_response is not None
+
+
+@pytest.mark.parametrize(
+    ("sample_type", "expected_cls"),
+    [
+        (DocumentType.PRESCRIPTION, PrescriptionData),
+        (DocumentType.VEHICLE, VehicleDocumentData),
+        (DocumentType.INVOICE, InvoiceData),
+    ],
+)
+def test_auto_detects_each_document_type_from_sample(sample_type, expected_cls):
+    pipeline = DocumentPipeline(MockExtractorClient())
+    envelope = pipeline.run(render_sample_image(sample_type), DocumentType.AUTO)
+    assert envelope.status is ExtractionStatus.OK
+    assert envelope.document_type is sample_type
+    assert isinstance(envelope.data, expected_cls)
+
+
+def test_auto_fails_when_document_type_cannot_be_inferred(png_bytes):
+    mock = MockExtractorClient({DocumentType.AUTO: {"unknown_field": "valor"}})
+    envelope = DocumentPipeline(mock).run(png_bytes, DocumentType.AUTO)
+    assert envelope.status is ExtractionStatus.FAILED
+    assert [i.code for i in envelope.issues] == ["unknown_document_type"]
+
+
+def test_preprocess_image_downscales_large_images():
+    large = Image.new("RGBA", (2400, 1800), (20, 40, 80, 255))
+    buf = io.BytesIO()
+    large.save(buf, format="JPEG" if large.mode == "RGB" else "PNG")
+    raw_png = buf.getvalue()
+
+    resized_bytes, mime = preprocess_image(raw_png, "image/png", max_dimension=1200)
+    assert mime == "image/png"
+    with Image.open(io.BytesIO(resized_bytes)) as img:
+        assert img.size == (1200, 900)
+
+    # Também converte RGBA -> RGB quando formato é JPEG
+    jpeg_bytes, _ = preprocess_image(raw_png, "image/jpeg", max_dimension=1000)
+    with Image.open(io.BytesIO(jpeg_bytes)) as img:
+        assert img.size == (1000, 750)
+        assert img.mode == "RGB"
+
+
+def test_build_token_usage_calculates_cost():
+    usage = build_token_usage(
+        {"prompt_tokens": 1000, "completion_tokens": 500},
+        image_bytes_original=50000,
+        image_bytes_sent=15000,
+    )
+    assert usage.total_tokens == 1500
+    assert usage.estimated_cost_usd == pytest.approx(0.0007)
+    assert usage.image_bytes_original == 50000
+    assert usage.image_bytes_sent == 15000
+
+    explicit = build_token_usage({"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.012345})
+    assert explicit.estimated_cost_usd == pytest.approx(0.012345)
 
 
 def test_envelope_round_trips_through_json():

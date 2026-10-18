@@ -15,6 +15,7 @@ class DocumentType(StrEnum):
     PRESCRIPTION = "prescription"
     VEHICLE = "vehicle_document"
     INVOICE = "invoice"
+    AUTO = "auto"
 
 
 class DocumentModel(BaseModel):
@@ -25,6 +26,7 @@ class DocumentModel(BaseModel):
 
 _DATE_FORMATS = ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y-%m-%d")
 _NUMBER_RE = re.compile(r"[^0-9,.\-+]")
+_BR_THOUSANDS_RE = re.compile(r"^[+-]?[1-9]\d{0,2}(?:\.\d{3})+$")
 
 
 def _blank_to_none(value: Any) -> Any:
@@ -48,21 +50,37 @@ def parse_br_date(value: Any) -> Any:
 
 
 def parse_br_number(value: Any) -> Any:
-    """Converte "R$ 1.234,56" / "+1,25" / 3.5 em Decimal."""
+    """Converte "R$ 1.234,56" / "R$ 1.200" / "+1,25" / 3.5 em Decimal finito."""
     value = _blank_to_none(value)
-    if value is None or isinstance(value, Decimal | bool):
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("número deve ser finito")
         return value
     if isinstance(value, int | float):
-        return Decimal(str(value))
+        number = Decimal(str(value))
+        if not number.is_finite():
+            raise ValueError("número deve ser finito")
+        return number
     if not isinstance(value, str):
         return value
+    if value.strip().lower().lstrip("+-") in {"nan", "inf", "infinity"}:
+        raise ValueError("número deve ser finito")
     text = _NUMBER_RE.sub("", value)
+    if not text:
+        return value
     if "," in text:
         text = text.replace(".", "").replace(",", ".")
+    elif _BR_THOUSANDS_RE.fullmatch(text):
+        text = text.replace(".", "")
     try:
-        return Decimal(text)
+        number = Decimal(text)
     except InvalidOperation:
         return value
+    if not number.is_finite():
+        raise ValueError("número deve ser finito")
+    return number
 
 
 def parse_diopter(value: Any) -> Any:
@@ -78,7 +96,7 @@ def parse_axis(value: Any) -> Any:
     """Eixos costumam vir como "90°" ou "090"."""
     value = _blank_to_none(value)
     if isinstance(value, str):
-        return value.strip().rstrip("°º").strip()
+        return value.strip().rstrip("°º").strip() or None
     return value
 
 
@@ -86,7 +104,7 @@ def normalize_document_number(value: Any) -> Any:
     """CPF/CNPJ sem pontuação; maiúsculas para o CNPJ alfanumérico (IN RFB 2.229/2024)."""
     value = _blank_to_none(value)
     if isinstance(value, str):
-        return re.sub(r"[^0-9A-Za-z]", "", value).upper()
+        return re.sub(r"[^0-9A-Za-z]", "", value).upper() or None
     return value
 
 
@@ -94,7 +112,7 @@ def normalize_code(value: Any) -> Any:
     """Placa/chassi: remove separadores e coloca em maiúsculas."""
     value = _blank_to_none(value)
     if isinstance(value, str):
-        return re.sub(r"[\s\-.]", "", value).upper()
+        return re.sub(r"[\s\-.]", "", value).upper() or None
     return value
 
 
@@ -103,7 +121,7 @@ def digits_only(value: Any) -> Any:
     if isinstance(value, int) and not isinstance(value, bool):
         return str(value)
     if isinstance(value, str):
-        return re.sub(r"\D", "", value)
+        return re.sub(r"\D", "", value) or None
     return value
 
 

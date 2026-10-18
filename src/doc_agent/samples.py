@@ -114,6 +114,8 @@ def _lines(document_type: DocumentType) -> list[str]:
 @cache
 def render_sample_image(document_type: DocumentType) -> bytes:
     """Gera um PNG sintético do documento de exemplo (determinístico)."""
+    if document_type is DocumentType.AUTO:
+        return render_sample_image(DocumentType.INVOICE)
     from PIL import Image, ImageDraw, ImageFont
 
     width, height = 1100, 620

@@ -55,12 +55,19 @@ def _check_eye(prefix: str, eye: EyePrescription) -> list[GuardrailIssue]:
     return issues
 
 
+def _is_empty_eye(eye: EyePrescription | None) -> bool:
+    return eye is None or all(
+        getattr(eye, attr) is None for attr in ("sphere", "cylinder", "axis", "addition")
+    )
+
+
 def check_prescription(data: PrescriptionData) -> list[GuardrailIssue]:
     issues: list[GuardrailIssue] = []
     for prefix, eye in (("od", data.od), ("oe", data.oe)):
-        if eye is None:
+        if _is_empty_eye(eye):
             issues.append(_warning(prefix, "missing_eye", f"grau do {prefix.upper()} ausente"))
         else:
+            assert eye is not None
             issues.extend(_check_eye(prefix, eye))
     if data.issue_date and data.issue_date > date.today():
         issues.append(_warning("issue_date", "future_date", "data de emissão no futuro"))
@@ -95,6 +102,48 @@ def check_vehicle(data: VehicleDocumentData) -> list[GuardrailIssue]:
     return issues
 
 
+def _check_nfe_key_consistency(data: InvoiceData) -> list[GuardrailIssue]:
+    key_info = v.parse_nfe_access_key(data.access_key)
+    if key_info is None:
+        return []
+    issues: list[GuardrailIssue] = []
+    if data.issuer_document and data.issuer_document != key_info.issuer_cnpj:
+        issues.append(
+            _error(
+                "access_key",
+                "access_key_cnpj_mismatch",
+                f"CNPJ na chave ({key_info.issuer_cnpj}) != emitente ({data.issuer_document})",
+            )
+        )
+    if data.issue_date is not None:
+        expected_yymm = f"{data.issue_date.year % 100:02d}{data.issue_date.month:02d}"
+        if expected_yymm != key_info.year_month:
+            issues.append(
+                _error(
+                    "access_key",
+                    "access_key_date_mismatch",
+                    f"AAMM na chave ({key_info.year_month}) difere da emissão ({expected_yymm})",
+                )
+            )
+    if data.invoice_number and int(data.invoice_number) != key_info.invoice_number:
+        issues.append(
+            _error(
+                "access_key",
+                "access_key_number_mismatch",
+                f"nNF na chave ({key_info.invoice_number}) != nota ({int(data.invoice_number)})",
+            )
+        )
+    if data.series and int(data.series) != key_info.series:
+        issues.append(
+            _warning(
+                "access_key",
+                "access_key_series_mismatch",
+                f"série na chave ({key_info.series}) difere da nota ({int(data.series)})",
+            )
+        )
+    return issues
+
+
 def check_invoice(data: InvoiceData) -> list[GuardrailIssue]:
     issues: list[GuardrailIssue] = []
     if data.issuer_document and not v.is_valid_tax_id(data.issuer_document):
@@ -103,8 +152,11 @@ def check_invoice(data: InvoiceData) -> list[GuardrailIssue]:
         issues.append(
             _error("recipient_document", "invalid_tax_id", "CPF/CNPJ do destinatário inválido")
         )
-    if data.access_key and not v.is_valid_nfe_access_key(data.access_key):
-        issues.append(_error("access_key", "invalid_access_key", "chave de acesso inválida"))
+    if data.access_key:
+        if not v.is_valid_nfe_access_key(data.access_key):
+            issues.append(_error("access_key", "invalid_access_key", "chave de acesso inválida"))
+        else:
+            issues.extend(_check_nfe_key_consistency(data))
 
     for idx, item in enumerate(data.items):
         if None in (item.quantity, item.unit_price, item.total):

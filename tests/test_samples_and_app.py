@@ -40,7 +40,9 @@ def test_app_extracts_embedded_example(app, doc_type):
     assert metrics["Status"] == "✅ Aprovado"
     assert metrics["Confiança"] == "100%"
     assert "Latência" in metrics
-    assert app.session_state["envelope"].document_type is doc_type
+    assert "Custo FinOps" in metrics
+    expected_type = DocumentType.INVOICE if doc_type is DocumentType.AUTO else doc_type
+    assert app.session_state["envelope"].document_type is expected_type
 
 
 def test_app_openrouter_without_key_shows_error(app):

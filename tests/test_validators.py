@@ -11,6 +11,7 @@ from doc_agent.guardrails import validators as v
     ("plate", "expected"),
     [
         ("BRA2E19", v.PlateFormat.MERCOSUL),
+        ("BRA-2E19", v.PlateFormat.MERCOSUL),
         ("abc1d23", v.PlateFormat.MERCOSUL),
         ("ABC1234", v.PlateFormat.LEGACY),
         ("ABC-1234", v.PlateFormat.LEGACY),
@@ -36,6 +37,8 @@ def test_plate_format(plate, expected):
         ("9BWZZZ377VTO04251", False),  # contém O
         ("9BWZZZ377VTI04251", False),  # contém I
         ("9BWZZZ377VTQ04251", False),  # contém Q
+        ("AAAAAAAAAAAAAAAAA", False),  # caractere único repetido
+        ("11111111111111111", False),  # dígito único repetido
         ("9BWZZZ377VT00425-", False),
         (None, False),
     ],
@@ -84,6 +87,12 @@ def test_cpf(cpf, valid):
         ("11.222.333/0001-80", False),
         ("12.ABC.345/01DE-36", False),
         ("00.000.000/0000-00", False),
+        ("AAAAAAAAAAAA45", False),  # raiz repetida alfanumérica
+        ("12.IBC.345/01DE-00", False),  # letra proibida I (IN RFB 2.229/2024)
+        ("12.OBC.345/01DE-00", False),  # letra proibida O
+        ("12.UBC.345/01DE-00", False),  # letra proibida U
+        ("12.QBC.345/01DE-00", False),  # letra proibida Q
+        ("12.FBC.345/01DE-00", False),  # letra proibida F
         ("12ABC34501DEAB", False),  # DVs devem ser numéricos
         (None, False),
     ],
@@ -104,9 +113,21 @@ def test_nfe_access_key():
     key = "35261011222333000181550010000123451000123450"
     assert v.is_valid_nfe_access_key(key)
     assert v.is_valid_nfe_access_key(" ".join(key[i : i + 4] for i in range(0, 44, 4)))
+    assert not v.is_valid_nfe_access_key("0" * 44)
     assert not v.is_valid_nfe_access_key(key[:-1] + "1")
     assert not v.is_valid_nfe_access_key(key[:-1])
     assert not v.is_valid_nfe_access_key(None)
+
+    parsed = v.parse_nfe_access_key(key)
+    assert parsed == v.NFeAccessKeyInfo(
+        uf_code="35",
+        year_month="2610",
+        issuer_cnpj="11222333000181",
+        model="55",
+        series=1,
+        invoice_number=12345,
+    )
+    assert v.parse_nfe_access_key("0" * 44) is None
 
 
 @pytest.mark.parametrize(
@@ -122,6 +143,8 @@ def test_nfe_access_key():
         (1.33, False),
         (None, False),
         (float("nan"), False),
+        (float("inf"), False),
+        (Decimal("Infinity"), False),
     ],
 )
 def test_diopter_step(value, valid):

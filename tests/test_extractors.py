@@ -13,7 +13,7 @@ from doc_agent.extractor import (
     MockExtractorClient,
     OpenRouterNemotronExtractor,
 )
-from doc_agent.extractor.prompts import build_user_prompt, parse_json_payload
+from doc_agent.extractor.prompts import build_user_prompt, infer_document_type, parse_json_payload
 from doc_agent.samples import SAMPLE_PAYLOADS
 from doc_agent.schemas import DocumentType
 
@@ -62,6 +62,8 @@ def test_user_prompt_embeds_json_schema(doc_type):
         '{"a": 1}',
         '```json\n{"a": 1}\n```',
         '<think>raciocínio {"b": 2}</think>\n{"a": 1}',
+        'raciocínio sem abertura {"b": 2}</think>\n{"a": 1}',
+        '<think>raciocínio truncado {"b": 2} sem fechar tag\n{"a": 1}',
         'Aqui está o resultado: {"a": 1} espero ter ajudado',
     ],
 )
@@ -75,13 +77,31 @@ def test_parse_json_payload_rejects_invalid(text):
         parse_json_payload(text)
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"document_type": "prescription"}, DocumentType.PRESCRIPTION),
+        ({"document_type": "VEHICLE"}, DocumentType.VEHICLE),
+        ({"od": {"sphere": -1.0}, "patient_name": "Ana"}, DocumentType.PRESCRIPTION),
+        ({"plate": "BRA2E19", "renavam": "00639884962"}, DocumentType.VEHICLE),
+        ({"access_key": "3526...", "total_amount": "100,00"}, DocumentType.INVOICE),
+        ({"foo": "bar"}, None),
+        ({}, None),
+    ],
+)
+def test_infer_document_type(payload, expected):
+    assert infer_document_type(payload) is expected
+
+
 # --- OpenRouter ----------------------------------------------------------------------------
 
 
-def completion(content, model=DEFAULT_MODEL):
+def completion(content, model=DEFAULT_MODEL, finish_reason="stop"):
     return {
         "model": model,
-        "choices": [{"message": {"role": "assistant", "content": content}}],
+        "choices": [
+            {"message": {"role": "assistant", "content": content}, "finish_reason": finish_reason}
+        ],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5},
     }
 
@@ -149,6 +169,46 @@ def test_openrouter_retries_transient_errors(png_bytes):
     extractor = OpenRouterNemotronExtractor(api_key="k", client=client, sleep=sleeps.append)
     assert extractor.extract(png_bytes, "image/png", DocumentType.INVOICE).payload == {"a": 1}
     assert sleeps == [0.5, 1.0]
+
+
+def test_openrouter_respects_retry_after_header(png_bytes):
+    responses = iter(
+        [
+            httpx.Response(429, headers={"Retry-After": "2.5"}),
+            httpx.Response(200, json=completion('{"a": 1}')),
+        ]
+    )
+    sleeps: list[float] = []
+    client = httpx.Client(
+        base_url="https://x", transport=httpx.MockTransport(lambda r: next(responses))
+    )
+    extractor = OpenRouterNemotronExtractor(api_key="k", client=client, sleep=sleeps.append)
+    assert extractor.extract(png_bytes, "image/png", DocumentType.INVOICE).payload == {"a": 1}
+    assert sleeps == [2.5]
+
+
+def test_openrouter_retries_http_200_upstream_errors(png_bytes):
+    responses = iter(
+        [
+            httpx.Response(200, json={"error": {"message": "Provider overloaded", "code": 502}}),
+            httpx.Response(200, json=completion('{"a": 1}', finish_reason="error")),
+            httpx.Response(200, json=completion('{"a": 1}')),
+        ]
+    )
+    extractor = make_extractor(lambda r: next(responses))
+    assert extractor.extract(png_bytes, "image/png", DocumentType.INVOICE).payload == {"a": 1}
+
+
+def test_openrouter_does_not_retry_http_200_client_error(png_bytes):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json={"error": {"message": "Bad request", "code": 400}})
+
+    with pytest.raises(ExtractorError, match="400"):
+        make_extractor(handler).extract(png_bytes, "image/png", DocumentType.INVOICE)
+    assert len(calls) == 1
 
 
 def test_openrouter_retries_transport_errors_then_gives_up(png_bytes):

@@ -34,6 +34,15 @@ class ExtractionStatus(StrEnum):
     FAILED = "failed"
 
 
+class TokenUsage(BaseModel):
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    estimated_cost_usd: float = Field(default=0.0, ge=0.0)
+    image_bytes_original: int | None = Field(default=None, ge=0)
+    image_bytes_sent: int | None = Field(default=None, ge=0)
+
+
 class ExtractionEnvelope(BaseModel):
     document_type: DocumentType
     status: ExtractionStatus
@@ -43,6 +52,7 @@ class ExtractionEnvelope(BaseModel):
     model: str
     latency_ms: float = Field(ge=0.0)
     extracted_at: datetime
+    usage: TokenUsage = Field(default_factory=TokenUsage)
     raw_response: dict[str, Any] | None = None
 
     @property

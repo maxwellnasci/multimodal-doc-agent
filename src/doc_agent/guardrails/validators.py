@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 
-MERCOSUL_PLATE_RE = re.compile(r"^[A-Z]{3}[0-9][A-Z][0-9]{2}$")
+MERCOSUL_PLATE_RE = re.compile(r"^[A-Z]{3}-?[0-9][A-Z][0-9]{2}$")
 LEGACY_PLATE_RE = re.compile(r"^[A-Z]{3}-?[0-9]{4}$")
 # ISO 3779: 17 caracteres alfanuméricos, sem I, O e Q (confundíveis com 1 e 0).
 VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 RENAVAM_RE = re.compile(r"^[0-9]{11}$")
 CPF_RE = re.compile(r"^[0-9]{11}$")
-# CNPJ alfanumérico (vigente desde jul/2026): 12 posições [0-9A-Z] + 2 DVs numéricos.
-CNPJ_RE = re.compile(r"^[0-9A-Z]{12}[0-9]{2}$")
+# CNPJ alfanumérico (IN RFB 2.229/2024): 12 posições sem I, O, U, Q e F + 2 DVs numéricos.
+CNPJ_RE = re.compile(r"^[0-9A-EG-HJ-NP-RT-Z]{12}[0-9]{2}$")
 NFE_KEY_RE = re.compile(r"^[0-9]{44}$")
 
 DIOPTER_STEP = Decimal("0.25")
@@ -23,6 +24,16 @@ AXIS_MIN, AXIS_MAX = 0, 180
 class PlateFormat(StrEnum):
     MERCOSUL = "mercosul"
     LEGACY = "legacy"
+
+
+@dataclass(frozen=True)
+class NFeAccessKeyInfo:
+    uf_code: str
+    year_month: str
+    issuer_cnpj: str
+    model: str
+    series: int
+    invoice_number: int
 
 
 def _clean(value: str) -> str:
@@ -45,7 +56,10 @@ def is_valid_plate(plate: str | None) -> bool:
 
 
 def is_valid_vin(vin: str | None) -> bool:
-    return bool(vin) and VIN_RE.fullmatch(vin.strip().upper()) is not None
+    if not vin:
+        return False
+    normalized = vin.strip().upper()
+    return VIN_RE.fullmatch(normalized) is not None and len(set(normalized)) > 1
 
 
 def is_valid_renavam(renavam: str | None) -> bool:
@@ -82,7 +96,7 @@ def is_valid_cnpj(cnpj: str | None) -> bool:
     if not cnpj:
         return False
     chars = _clean(cnpj)
-    if not CNPJ_RE.fullmatch(chars) or len(set(chars)) == 1:
+    if not CNPJ_RE.fullmatch(chars) or len(set(chars[:12])) == 1:
         return False
     base_weights = (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)
     for size, weights in ((12, base_weights), (13, (6, *base_weights))):
@@ -106,11 +120,27 @@ def is_valid_nfe_access_key(key: str | None) -> bool:
     if not key:
         return False
     digits = _clean(key)
-    if not NFE_KEY_RE.fullmatch(digits):
+    if not NFE_KEY_RE.fullmatch(digits) or len(set(digits)) == 1:
         return False
     total = sum(int(d) * (2 + i % 8) for i, d in enumerate(reversed(digits[:43])))
     remainder = total % 11
     return (0 if remainder < 2 else 11 - remainder) == int(digits[43])
+
+
+def parse_nfe_access_key(key: str | None) -> NFeAccessKeyInfo | None:
+    """Decompõe os 44 dígitos da chave NF-e (cUF, AAMM, CNPJ, mod, série, nNF)."""
+    if not is_valid_nfe_access_key(key):
+        return None
+    assert key is not None
+    digits = _clean(key)
+    return NFeAccessKeyInfo(
+        uf_code=digits[0:2],
+        year_month=digits[2:6],
+        issuer_cnpj=digits[6:20],
+        model=digits[20:22],
+        series=int(digits[22:25]),
+        invoice_number=int(digits[25:34]),
+    )
 
 
 def is_valid_diopter_step(value: float | Decimal | None, step: Decimal = DIOPTER_STEP) -> bool:
@@ -118,7 +148,10 @@ def is_valid_diopter_step(value: float | Decimal | None, step: Decimal = DIOPTER
     if value is None:
         return False
     try:
-        quotient = Decimal(str(value)) / step
+        dec = Decimal(str(value))
+        if not dec.is_finite():
+            return False
+        quotient = dec / step
     except InvalidOperation:
         return False
     return quotient == quotient.to_integral_value()

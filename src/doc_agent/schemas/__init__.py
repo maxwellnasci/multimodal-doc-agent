@@ -5,6 +5,7 @@ from doc_agent.schemas.envelope import (
     ExtractionStatus,
     GuardrailIssue,
     Severity,
+    TokenUsage,
 )
 from doc_agent.schemas.invoice import InvoiceData, InvoiceItem
 from doc_agent.schemas.prescription import EyePrescription, PrescriptionData
@@ -28,5 +29,6 @@ __all__ = [
     "InvoiceItem",
     "PrescriptionData",
     "Severity",
+    "TokenUsage",
     "VehicleDocumentData",
 ]

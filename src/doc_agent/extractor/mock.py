@@ -31,9 +31,19 @@ class MockExtractorClient(ExtractorClient):
         self.calls.append((document_type, mime_type, len(image)))
         if self._error is not None:
             raise self._error
-        payload = copy.deepcopy(self._responses[document_type])
+        resolved = document_type
+        if resolved is DocumentType.AUTO and DocumentType.AUTO not in self._responses:
+            from doc_agent.samples import render_sample_image
+
+            resolved = DocumentType.INVOICE
+            for candidate in SAMPLE_PAYLOADS:
+                if image == render_sample_image(candidate):
+                    resolved = candidate
+                    break
+        payload = copy.deepcopy(self._responses[resolved])
         return ExtractionResult(
             payload=payload,
             model=self.model_name,
             raw_text=json.dumps(payload, ensure_ascii=False),
+            usage={"prompt_tokens": 250, "completion_tokens": 80, "total_tokens": 330},
         )

@@ -21,6 +21,7 @@ DOC_LABELS = {
     DocumentType.PRESCRIPTION: "👓 Receita oftalmológica",
     DocumentType.VEHICLE: "🚗 CRLV (documento de veículo)",
     DocumentType.INVOICE: "🧾 Nota fiscal",
+    DocumentType.AUTO: "🔍 Detectar automaticamente (AUTO)",
 }
 STATUS_LABELS = {
     ExtractionStatus.OK: "✅ Aprovado",
@@ -74,11 +75,16 @@ def render_sidebar() -> tuple[str, str, str, DocumentType]:
 
 
 def render_result(envelope: ExtractionEnvelope) -> None:
-    cols = st.columns(4)
+    cols = st.columns(5)
     cols[0].metric("Status", STATUS_LABELS[envelope.status])
     cols[1].metric("Confiança", f"{envelope.confidence:.0%}")
     cols[2].metric("Latência", f"{envelope.latency_ms:,.0f} ms")
     cols[3].metric("Alertas", f"{len(envelope.errors)} erros · {len(envelope.warnings)} avisos")
+    cols[4].metric(
+        "Custo FinOps",
+        f"${envelope.usage.estimated_cost_usd:.5f}",
+        f"{envelope.usage.total_tokens} tok",
+    )
 
     data_tab, issues_tab, raw_tab = st.tabs(["Dados extraídos", "Guardrails", "Resposta bruta"])
     with data_tab:
@@ -100,7 +106,7 @@ def render_result(envelope: ExtractionEnvelope) -> None:
         file_name=f"{envelope.document_type.value}_extraction.json",
         mime="application/json",
     )
-    st.caption(f"Modelo: `{envelope.model}`")
+    st.caption(f"Modelo: `{envelope.model}` · Tipo: `{envelope.document_type.value}`")
 
 
 def main() -> None:
@@ -146,7 +152,7 @@ def main() -> None:
                     finally:
                         extractor.close()
         envelope = st.session_state.get("envelope")
-        if envelope is not None and envelope.document_type is document_type:
+        if envelope is not None and document_type in (envelope.document_type, DocumentType.AUTO):
             render_result(envelope)
 
 

@@ -100,15 +100,21 @@ class OpenRouterNemotronExtractor(ExtractorClient):
             "X-Title": "multimodal-doc-agent",
         }
         last_error: Exception | None = None
+        retry_after_delay: float | None = None
         for attempt in range(self._max_retries + 1):
             if attempt:
-                self._sleep(0.5 * 2 ** (attempt - 1))
+                delay = (
+                    retry_after_delay if retry_after_delay is not None else 0.5 * 2 ** (attempt - 1)
+                )
+                retry_after_delay = None
+                self._sleep(delay)
             try:
                 response = self._client.post("/chat/completions", json=payload, headers=headers)
             except httpx.TransportError as exc:
                 last_error = exc
                 continue
             if response.status_code in RETRYABLE_STATUS:
+                retry_after_delay = _parse_retry_after(response.headers.get("retry-after"))
                 last_error = ExtractorError(f"OpenRouter HTTP {response.status_code}")
                 continue
             if response.is_error:
@@ -116,7 +122,42 @@ class OpenRouterNemotronExtractor(ExtractorClient):
                     f"OpenRouter HTTP {response.status_code}: {response.text[:300]}"
                 )
             try:
-                return response.json()
+                body = response.json()
             except ValueError as exc:
                 raise ExtractorError("OpenRouter retornou corpo não-JSON") from exc
+            if isinstance(body, dict) and "error" in body:
+                err = body["error"]
+                code = err.get("code") if isinstance(err, dict) else None
+                msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                try:
+                    code_int = int(code) if code is not None else None
+                except (TypeError, ValueError):
+                    code_int = None
+                if code_int is None or code_int in RETRYABLE_STATUS or code_int >= 500:
+                    last_error = ExtractorError(f"OpenRouter erro upstream ({code}): {msg}")
+                    continue
+                raise ExtractorError(f"OpenRouter HTTP {code_int}: {msg}")
+            if _has_finish_reason_error(body):
+                last_error = ExtractorError("OpenRouter retornou finish_reason=error")
+                continue
+            return body
         raise ExtractorError(f"falha após {self._max_retries + 1} tentativas: {last_error}")
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    return min(max(parsed, 0.0), 30.0)
+
+
+def _has_finish_reason_error(body: Any) -> bool:
+    if not isinstance(body, dict):
+        return False
+    choices = body.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        return choices[0].get("finish_reason") == "error"
+    return False
