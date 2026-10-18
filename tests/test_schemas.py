@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import json
+from datetime import date
+from decimal import Decimal
+
+import pytest
+from pydantic import ValidationError
+
+from doc_agent.schemas import (
+    SCHEMA_BY_TYPE,
+    DocumentType,
+    EyePrescription,
+    InvoiceData,
+    PrescriptionData,
+    VehicleDocumentData,
+)
+
+
+def test_prescription_normalizes_brazilian_formats(prescription_payload):
+    data = PrescriptionData.model_validate(prescription_payload)
+    assert data.issue_date == date(2026, 9, 15)
+    assert data.od == EyePrescription(sphere=-2.25, cylinder=-0.75, axis=180, addition=1.5)
+    assert data.oe is not None
+    assert data.oe.axis == 170
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("plano", 0.0), ("PL", 0.0), ("+1,25", 1.25), ("-0.50", -0.5), (2, 2.0), ("", None)],
+)
+def test_diopter_parsing(raw, expected):
+    assert EyePrescription(sphere=raw).sphere == expected
+
+
+@pytest.mark.parametrize("raw", ["90°", "090", 90, " 90º "])
+def test_axis_parsing(raw):
+    assert EyePrescription(axis=raw).axis == 90
+
+
+def test_invalid_axis_type_raises():
+    with pytest.raises(ValidationError):
+        EyePrescription(axis="noventa")
+
+
+def test_vehicle_normalizes_codes(vehicle_payload):
+    vehicle_payload["chassis"] = "9bw zzz377vt004251"
+    data = VehicleDocumentData.model_validate(vehicle_payload)
+    assert data.plate == "BRA2E19"
+    assert data.chassis == "9BWZZZ377VT004251"
+    assert data.owner_document == "52998224725"
+    assert data.renavam == "00639884962"
+
+
+def test_renavam_accepts_integer():
+    assert VehicleDocumentData(renavam=639884962).renavam == "639884962"
+
+
+def test_invoice_parses_money_and_items(invoice_payload):
+    data = InvoiceData.model_validate(invoice_payload)
+    assert data.total_amount == Decimal("1189.90")
+    assert data.items[0].unit_price == Decimal("450.00")
+    assert data.items[1].quantity == Decimal("1")
+    assert data.issuer_document == "11222333000181"
+    assert len(data.access_key or "") == 44
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("R$ 1.234,56", "1234.56"), ("10,5", "10.5"), ("99.90", "99.90"), (12.3, "12.3"), (7, "7")],
+)
+def test_money_parsing(raw, expected):
+    assert InvoiceData(total_amount=raw).total_amount == Decimal(expected)
+
+
+def test_money_serializes_as_number_in_json(invoice_payload):
+    dumped = json.loads(InvoiceData.model_validate(invoice_payload).model_dump_json())
+    assert dumped["total_amount"] == pytest.approx(1189.90)
+    assert InvoiceData().model_dump(mode="json")["total_amount"] is None
+
+
+@pytest.mark.parametrize("raw", ["2026-13-45", "ontem"])
+def test_invalid_date_raises(raw):
+    with pytest.raises(ValidationError):
+        InvoiceData(issue_date=raw)
+
+
+@pytest.mark.parametrize("raw", ["18/10/2026", "18-10-2026", "18.10.2026", "2026-10-18"])
+def test_date_formats(raw):
+    assert InvoiceData(issue_date=raw).issue_date == date(2026, 10, 18)
+
+
+def test_blank_strings_become_none():
+    data = PrescriptionData(patient_name="   ", issue_date="")
+    assert data.patient_name is None
+    assert data.issue_date is None
+
+
+def test_extra_keys_are_ignored():
+    data = VehicleDocumentData.model_validate({"plate": "ABC1234", "confidence": 0.9})
+    assert not hasattr(data, "confidence")
+
+
+@pytest.mark.parametrize("doc_type", list(DocumentType))
+def test_every_type_has_schema_and_json_schema(doc_type):
+    schema = SCHEMA_BY_TYPE[doc_type]
+    json_schema = schema.model_json_schema()
+    assert json_schema["type"] == "object"
+    for path in schema.critical_fields:
+        assert path.split(".")[0] in json_schema["properties"]
