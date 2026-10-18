@@ -31,8 +31,7 @@ class MockExtractorClient(ExtractorClient):
         self.calls.append((document_type, mime_type, len(image)))
         if self._error is not None:
             raise self._error
-        resolved = document_type
-        if resolved is DocumentType.AUTO and DocumentType.AUTO not in self._responses:
+        if document_type is DocumentType.AUTO and DocumentType.AUTO not in self._responses:
             from doc_agent.samples import render_sample_image
 
             resolved = DocumentType.INVOICE
@@ -40,7 +39,13 @@ class MockExtractorClient(ExtractorClient):
                 if image == render_sample_image(candidate):
                     resolved = candidate
                     break
-        payload = copy.deepcopy(self._responses[resolved])
+            # Mesmo formato pedido ao modelo real pela union discriminada do modo AUTO.
+            payload = {
+                "document_type": resolved.value,
+                "data": copy.deepcopy(self._responses[resolved]),
+            }
+        else:
+            payload = copy.deepcopy(self._responses[document_type])
         return ExtractionResult(
             payload=payload,
             model=self.model_name,

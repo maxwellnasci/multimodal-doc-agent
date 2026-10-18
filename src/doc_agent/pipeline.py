@@ -13,7 +13,7 @@ from PIL import Image, ImageOps
 from pydantic import ValidationError
 
 from doc_agent.extractor import ExtractorClient, ExtractorError
-from doc_agent.extractor.prompts import infer_document_type
+from doc_agent.extractor.prompts import resolve_auto_payload
 from doc_agent.guardrails import run_guardrails
 from doc_agent.schemas import (
     SCHEMA_BY_TYPE,
@@ -220,8 +220,9 @@ class DocumentPipeline:
             image_bytes_sent=len(processed_image),
         )
 
+        payload: Mapping[str, Any] = result.payload
         if document_type is DocumentType.AUTO:
-            inferred = infer_document_type(result.payload)
+            inferred, payload = resolve_auto_payload(result.payload)
             if inferred is None:
                 return failure(
                     [
@@ -237,7 +238,7 @@ class DocumentPipeline:
             resolved_type = inferred
 
         try:
-            data = SCHEMA_BY_TYPE[resolved_type].model_validate(result.payload)
+            data = SCHEMA_BY_TYPE[resolved_type].model_validate(payload)
         except ValidationError as exc:
             issues = [
                 _issue(

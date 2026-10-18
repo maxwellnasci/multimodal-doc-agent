@@ -13,10 +13,17 @@ from doc_agent.extractor import (
     MockExtractorClient,
     OpenRouterNemotronExtractor,
 )
-from doc_agent.extractor.prompts import build_user_prompt, infer_document_type, parse_json_payload
+from doc_agent.extractor.prompts import (
+    DOCUMENT_HINTS,
+    build_auto_schema,
+    build_user_prompt,
+    infer_document_type,
+    parse_json_payload,
+    resolve_auto_payload,
+)
 from doc_agent.pipeline import DocumentPipeline, ModelPricing
 from doc_agent.samples import SAMPLE_PAYLOADS, render_sample_image
-from doc_agent.schemas import CostSource, DocumentType, ExtractionStatus
+from doc_agent.schemas import SCHEMA_BY_TYPE, CostSource, DocumentType, ExtractionStatus
 
 # --- Mock ----------------------------------------------------------------------------------
 
@@ -92,6 +99,84 @@ def test_parse_json_payload_rejects_invalid(text):
 )
 def test_infer_document_type(payload, expected):
     assert infer_document_type(payload) is expected
+
+
+def _refs(node):
+    if isinstance(node, dict):
+        if "$ref" in node:
+            yield node["$ref"]
+        for value in node.values():
+            yield from _refs(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _refs(value)
+
+
+def test_auto_schema_is_discriminated_union_with_intact_branches():
+    schema = build_auto_schema()
+    assert "properties" not in schema  # nada mesclado no nível de cima
+    branches = schema["anyOf"]
+    assert [b["properties"]["document_type"] for b in branches] == [
+        {"const": t.value} for t in SCHEMA_BY_TYPE
+    ]
+    for branch, doc_schema in zip(branches, SCHEMA_BY_TYPE.values(), strict=True):
+        assert branch["required"] == ["document_type", "data"]
+        expected = doc_schema.model_json_schema()
+        expected.pop("$defs", None)
+        assert branch["properties"]["data"] == expected
+    # issue_date existe em receita e nota, mas cada um no seu ramo.
+    assert sum("issue_date" in b["properties"]["data"]["properties"] for b in branches) == 2
+
+
+def test_auto_schema_refs_resolve_to_root_defs():
+    schema = build_auto_schema()
+    refs = set(_refs(schema))
+    assert refs  # EyePrescription e InvoiceItem são referenciados
+    assert {r.removeprefix("#/$defs/") for r in refs} <= set(schema["$defs"])
+
+
+def test_auto_prompt_keeps_every_type_hint():
+    prompt = build_user_prompt(DocumentType.AUTO)
+    for doc_type in SCHEMA_BY_TYPE:
+        assert DOCUMENT_HINTS[doc_type] in prompt
+    assert '"data"' in prompt
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_type", "expected_data"),
+    [
+        ({"document_type": "invoice", "data": {"a": 1}}, DocumentType.INVOICE, {"a": 1}),
+        # tipo explícito prevalece sobre as chaves de `data`
+        (
+            {"document_type": "prescription", "data": {"plate": "X"}},
+            DocumentType.PRESCRIPTION,
+            {"plate": "X"},
+        ),
+        # sem tipo (ou tipo inválido): infere pelas chaves de `data`
+        ({"data": {"plate": "BRA2E19"}}, DocumentType.VEHICLE, {"plate": "BRA2E19"}),
+        ({"document_type": "boleto", "data": {"plate": "X"}}, DocumentType.VEHICLE, {"plate": "X"}),
+        # modelo ignorou o envelope e devolveu os campos soltos
+        (
+            {"document_type": "invoice", "total_amount": 1},
+            DocumentType.INVOICE,
+            {"document_type": "invoice", "total_amount": 1},
+        ),
+        ({"data": {"foo": 1}}, None, {"foo": 1}),
+    ],
+)
+def test_resolve_auto_payload(payload, expected_type, expected_data):
+    doc_type, data = resolve_auto_payload(payload)
+    assert doc_type is expected_type
+    assert data == expected_data
+
+
+def test_mock_auto_returns_discriminated_payload():
+    image = render_sample_image(DocumentType.VEHICLE)
+    payload = MockExtractorClient().extract(image, "image/png", DocumentType.AUTO).payload
+    assert payload == {
+        "document_type": "vehicle_document",
+        "data": SAMPLE_PAYLOADS[DocumentType.VEHICLE],
+    }
 
 
 # --- OpenRouter ----------------------------------------------------------------------------

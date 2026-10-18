@@ -77,6 +77,28 @@ def test_auto_detects_each_document_type_from_sample(sample_type, expected_cls):
     assert isinstance(envelope.data, expected_cls)
 
 
+def test_auto_validates_only_the_data_of_the_declared_type(png_bytes, invoice_payload):
+    # Campo de outro tipo dentro de `data` não vaza: o schema da nota ignora `od`.
+    response = {"document_type": "invoice", "data": {**invoice_payload, "od": {"sphere": -1}}}
+    envelope = DocumentPipeline(MockExtractorClient({DocumentType.AUTO: response})).run(
+        png_bytes, DocumentType.AUTO
+    )
+    assert envelope.status is ExtractionStatus.OK
+    assert envelope.document_type is DocumentType.INVOICE
+    assert isinstance(envelope.data, InvoiceData)
+    assert envelope.raw_response == response
+
+
+def test_auto_reports_schema_errors_of_the_declared_type(png_bytes):
+    response = {"document_type": "vehicle_document", "data": {"manufacture_year": "abc"}}
+    envelope = DocumentPipeline(MockExtractorClient({DocumentType.AUTO: response})).run(
+        png_bytes, DocumentType.AUTO
+    )
+    assert envelope.status is ExtractionStatus.FAILED
+    assert envelope.document_type is DocumentType.VEHICLE
+    assert [i.field for i in envelope.issues] == ["manufacture_year"]
+
+
 def test_auto_fails_when_document_type_cannot_be_inferred(png_bytes):
     mock = MockExtractorClient({DocumentType.AUTO: {"unknown_field": "valor"}})
     envelope = DocumentPipeline(mock).run(png_bytes, DocumentType.AUTO)

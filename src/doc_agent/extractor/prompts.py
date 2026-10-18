@@ -24,12 +24,13 @@ DOCUMENT_HINTS: dict[DocumentType, str] = {
         "de 44 caracteres (copie letras do CNPJ alfanumérico como estão), cada item com "
         "quantidade, valor unitário e total, e o valor total da nota."
     ),
-    DocumentType.AUTO: (
-        "Identifique automaticamente o tipo de documento brasileiro na imagem "
-        "('prescription', 'vehicle_document' ou 'invoice'), inclua a chave 'document_type' "
-        "e extraia os campos correspondentes ao schema desse documento."
-    ),
 }
+DOCUMENT_HINTS[DocumentType.AUTO] = (
+    "Identifique o tipo do documento brasileiro na imagem e responda no formato "
+    '{"document_type": "<tipo>", "data": {<campos do schema desse tipo>}}, usando só os '
+    "campos do tipo escolhido. Tipos:\n"
+    + "\n".join(f"- {t.value}: {DOCUMENT_HINTS[t]}" for t in SCHEMA_BY_TYPE)
+)
 
 _SIGNATURE_FIELDS: dict[DocumentType, frozenset[str]] = {
     DocumentType.PRESCRIPTION: frozenset(
@@ -75,22 +76,32 @@ _OPEN_THINK_RE = re.compile(r"<think>", re.IGNORECASE)
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 
+def build_auto_schema() -> dict[str, Any]:
+    """Union discriminada: cada tipo mantém seu schema intacto sob `data`, sem mesclar campos."""
+    branches: list[dict[str, Any]] = []
+    defs: dict[str, Any] = {}
+    for doc_type, doc_schema in SCHEMA_BY_TYPE.items():
+        schema = doc_schema.model_json_schema()
+        # $refs apontam para "#/$defs/..." da raiz, então os $defs sobem para o schema externo.
+        for name, definition in schema.pop("$defs", {}).items():
+            if defs.setdefault(name, definition) != definition:
+                raise ValueError(f"$defs conflitante entre schemas: {name}")
+        branches.append(
+            {
+                "type": "object",
+                "properties": {"document_type": {"const": doc_type.value}, "data": schema},
+                "required": ["document_type", "data"],
+            }
+        )
+    auto: dict[str, Any] = {"anyOf": branches}
+    if defs:
+        auto["$defs"] = defs
+    return auto
+
+
 def build_user_prompt(document_type: DocumentType) -> str:
     if document_type is DocumentType.AUTO:
-        properties: dict[str, Any] = {
-            "document_type": {
-                "type": "string",
-                "enum": [t.value for t in SCHEMA_BY_TYPE],
-            }
-        }
-        defs: dict[str, Any] = {}
-        for doc_schema in SCHEMA_BY_TYPE.values():
-            sub = doc_schema.model_json_schema()
-            properties.update(sub.get("properties", {}))
-            defs.update(sub.get("$defs", {}))
-        schema: dict[str, Any] = {"type": "object", "properties": properties}
-        if defs:
-            schema["$defs"] = defs
+        schema = build_auto_schema()
     else:
         schema = SCHEMA_BY_TYPE[document_type].model_json_schema()
     return (
@@ -117,6 +128,17 @@ def infer_document_type(payload: Mapping[str, Any]) -> DocumentType | None:
             best_score = score
             best_type = doc_type
     return best_type
+
+
+def resolve_auto_payload(
+    payload: Mapping[str, Any],
+) -> tuple[DocumentType | None, Mapping[str, Any]]:
+    """Separa tipo e dados da resposta AUTO; tolera o modelo devolver os campos sem `data`."""
+    data = payload.get("data")
+    if isinstance(data, Mapping):
+        doc_type = infer_document_type({"document_type": payload.get("document_type")})
+        return doc_type or infer_document_type(data), data
+    return infer_document_type(payload), payload
 
 
 def _strip_thinking(text: str) -> str:
