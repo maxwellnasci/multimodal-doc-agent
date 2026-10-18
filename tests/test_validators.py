@@ -146,6 +146,21 @@ def test_nfe_access_key_with_alphanumeric_cnpj():
 
 
 @pytest.mark.parametrize(
+    ("issuer_field", "valid"),
+    [
+        ("11222333000181", True),
+        ("12ABC34501DE35", True),
+        ("00052998224725", True),  # "000" + CPF de produtor rural
+        ("11222333000180", False),  # DV do CNPJ errado
+        ("00052998224724", False),  # DV do CPF errado
+        ("00000000000000", False),
+    ],
+)
+def test_nfe_key_issuer(issuer_field, valid):
+    assert v.is_valid_nfe_key_issuer(issuer_field) is valid
+
+
+@pytest.mark.parametrize(
     "position",
     [
         0,  # cUF

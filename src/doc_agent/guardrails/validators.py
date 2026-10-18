@@ -144,6 +144,13 @@ def parse_nfe_access_key(key: str | None) -> NFeAccessKeyInfo | None:
     )
 
 
+def is_valid_nfe_key_issuer(issuer_field: str) -> bool:
+    """Campo do emitente na chave: CNPJ válido ou "000" + CPF válido (pessoa física)."""
+    return is_valid_cnpj(issuer_field) or (
+        issuer_field.startswith("000") and is_valid_cpf(issuer_field[3:])
+    )
+
+
 def is_valid_diopter_step(value: float | Decimal | None, step: Decimal = DIOPTER_STEP) -> bool:
     """Lentes são fabricadas em passos clínicos de 0,25 D."""
     if value is None:

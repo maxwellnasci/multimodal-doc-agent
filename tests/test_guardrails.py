@@ -200,6 +200,16 @@ def test_invoice_alphanumeric_cnpj_key_mismatch_is_flagged(invoice_payload):
     assert codes(issues) == {("access_key", "access_key_cnpj_mismatch")}
 
 
+@pytest.mark.parametrize("issuer_field", ["11222333000180", "12ABC34501DE36", "00052998224724"])
+def test_invoice_key_with_invalid_issuer_is_flagged_without_extracted_issuer(
+    invoice_payload, issuer_field
+):
+    invoice_payload.update(issuer_document=None, access_key=_nfe_key(issuer_field))
+    issues = run_guardrails(InvoiceData.model_validate(invoice_payload))
+    assert ("access_key", "access_key_invalid_issuer") in codes(issues)
+    assert ("access_key", "access_key_cnpj_mismatch") not in codes(issues)
+
+
 def test_invoice_missing_total_and_items():
     assert codes(run_guardrails(InvoiceData())) == {("total_amount", "missing_field")}
     assert codes(run_guardrails(InvoiceData(total_amount="10"))) == {("items", "missing_items")}

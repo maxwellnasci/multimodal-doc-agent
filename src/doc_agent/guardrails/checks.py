@@ -107,6 +107,15 @@ def _check_nfe_key_consistency(data: InvoiceData) -> list[GuardrailIssue]:
     if key_info is None:
         return []
     issues: list[GuardrailIssue] = []
+    # NT 2025.001: o CNPJ que compõe a chave deve ser válido, mesmo sem emitente extraído.
+    if not v.is_valid_nfe_key_issuer(key_info.issuer_cnpj):
+        issues.append(
+            _error(
+                "access_key",
+                "access_key_invalid_issuer",
+                f"CNPJ/CPF na chave ({key_info.issuer_cnpj}) é inválido",
+            )
+        )
     issuer = data.issuer_document
     # Emitente pessoa física (ex.: produtor rural): a chave traz "000" + CPF no campo do CNPJ.
     expected_key_doc = f"000{issuer}" if issuer and len(issuer) == 11 else issuer
