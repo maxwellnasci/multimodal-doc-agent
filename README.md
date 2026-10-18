@@ -1,7 +1,7 @@
 # multimodal-doc-agent
 
 ![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white)
-![Testes](https://img.shields.io/badge/tests-292%20passed-brightgreen)
+[![CI](https://github.com/maxwellnasci/multimodal-doc-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/maxwellnasci/multimodal-doc-agent/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 ![NVIDIA Nemotron 3.5 Super VL](https://img.shields.io/badge/NVIDIA-Nemotron%203.5%20Super%20VL-76B900?logo=nvidia&logoColor=white)
 [![Licença MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -136,8 +136,9 @@ pytest --cov=doc_agent
 ruff check . && ruff format --check .
 ```
 
-A suíte roda sem rede (o OpenRouter é simulado com `httpx.MockTransport`) e passa no Python 3.11,
-3.12 e 3.13.
+A suíte roda sem rede (o OpenRouter é simulado com `httpx.MockTransport`). O
+[CI](.github/workflows/ci.yml) roda `ruff` e os testes (com `-W error` e cobertura) no Python 3.11,
+3.12 e 3.13 a cada push na `main` e em todo pull request. O benchmark pago não roda no CI.
 
 Todos os dados de exemplo são fictícios (com dígitos verificadores válidos).
 
