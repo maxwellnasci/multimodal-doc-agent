@@ -49,6 +49,12 @@ print(envelope.model_dump_json(indent=2))
 
 O modelo padrão é `nvidia/nemotron-3.5-super-vl` e pode ser trocado via `DOC_AGENT_MODEL`.
 
+**Custo (FinOps):** `envelope.usage.estimated_cost_usd` vem do `usage.cost` que o OpenRouter
+devolve em toda resposta (`cost_source="provider"`). Para provedores que não informam custo,
+passe os preços do modelo: `DocumentPipeline(extractor, pricing=ModelPricing(0.30, 0.80))`
+(USD por 1M de tokens de entrada/saída, `cost_source="estimated"`). Sem nenhum dos dois, o
+custo fica `None` (`cost_source="unknown"`) em vez de um valor inventado.
+
 ## Qualidade
 
 ```bash

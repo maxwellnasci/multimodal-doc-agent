@@ -34,11 +34,18 @@ class ExtractionStatus(StrEnum):
     FAILED = "failed"
 
 
+class CostSource(StrEnum):
+    PROVIDER = "provider"  # custo real devolvido pelo provedor (ex.: usage.cost do OpenRouter)
+    ESTIMATED = "estimated"  # tokens x ModelPricing informado ao pipeline
+    UNKNOWN = "unknown"  # sem custo do provedor nem preços configurados
+
+
 class TokenUsage(BaseModel):
     prompt_tokens: int = Field(default=0, ge=0)
     completion_tokens: int = Field(default=0, ge=0)
     total_tokens: int = Field(default=0, ge=0)
-    estimated_cost_usd: float = Field(default=0.0, ge=0.0)
+    estimated_cost_usd: float | None = Field(default=None, ge=0.0)
+    cost_source: CostSource = CostSource.UNKNOWN
     image_bytes_original: int | None = Field(default=None, ge=0)
     image_bytes_sent: int | None = Field(default=None, ge=0)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,6 +17,7 @@ from doc_agent.extractor.prompts import infer_document_type
 from doc_agent.guardrails import run_guardrails
 from doc_agent.schemas import (
     SCHEMA_BY_TYPE,
+    CostSource,
     DocumentData,
     DocumentType,
     ExtractionEnvelope,
@@ -27,8 +29,6 @@ from doc_agent.schemas import (
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 DEFAULT_MAX_IMAGE_DIMENSION = 1600
-PROMPT_PRICE_PER_1M = 0.30
-COMPLETION_PRICE_PER_1M = 0.80
 ERROR_PENALTY = 0.25
 WARNING_PENALTY = 0.05
 REVIEW_THRESHOLD = 0.8
@@ -87,29 +87,44 @@ def preprocess_image(
     return buffer.getvalue(), mime_type
 
 
+@dataclass(frozen=True)
+class ModelPricing:
+    """Preço do modelo em USD por 1M de tokens; usado só quando o provedor não informa o custo."""
+
+    prompt_usd_per_1m: float
+    completion_usd_per_1m: float
+
+    def cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+        return (
+            prompt_tokens * self.prompt_usd_per_1m + completion_tokens * self.completion_usd_per_1m
+        ) / 1_000_000
+
+
 def build_token_usage(
     usage: Mapping[str, Any] | None,
     *,
+    pricing: ModelPricing | None = None,
     image_bytes_original: int | None = None,
     image_bytes_sent: int | None = None,
 ) -> TokenUsage:
-    """Calcula tokens e custo estimado em USD (FinOps) a partir do retorno do provedor."""
+    """Tokens e custo em USD: custo do provedor > estimativa por `pricing` > desconhecido."""
     raw = usage or {}
     prompt_tokens = max(0, int(raw.get("prompt_tokens") or 0))
     completion_tokens = max(0, int(raw.get("completion_tokens") or 0))
     total_tokens = max(0, int(raw.get("total_tokens") or (prompt_tokens + completion_tokens)))
     explicit_cost = raw.get("cost") if raw.get("cost") is not None else raw.get("total_cost")
+    cost: float | None = None
+    source = CostSource.UNKNOWN
     if explicit_cost is not None:
-        cost = max(0.0, float(explicit_cost))
-    else:
-        cost = (
-            prompt_tokens * PROMPT_PRICE_PER_1M + completion_tokens * COMPLETION_PRICE_PER_1M
-        ) / 1_000_000
+        cost, source = max(0.0, float(explicit_cost)), CostSource.PROVIDER
+    elif pricing is not None and raw:
+        cost, source = pricing.cost(prompt_tokens, completion_tokens), CostSource.ESTIMATED
     return TokenUsage(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
-        estimated_cost_usd=round(cost, 6),
+        estimated_cost_usd=round(cost, 6) if cost is not None else None,
+        cost_source=source,
         image_bytes_original=image_bytes_original,
         image_bytes_sent=image_bytes_sent,
     )
@@ -146,12 +161,14 @@ class DocumentPipeline:
         review_threshold: float = REVIEW_THRESHOLD,
         max_image_bytes: int = MAX_IMAGE_BYTES,
         max_image_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION,
+        pricing: ModelPricing | None = None,
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
         self._extractor = extractor
         self._review_threshold = review_threshold
         self._max_image_bytes = max_image_bytes
         self._max_image_dimension = max_image_dimension
+        self._pricing = pricing
         self._clock = clock
 
     def run(self, image: bytes, document_type: DocumentType) -> ExtractionEnvelope:
@@ -197,6 +214,7 @@ class DocumentPipeline:
 
         token_usage = build_token_usage(
             result.usage,
+            pricing=self._pricing,
             image_bytes_original=len(image),
             image_bytes_sent=len(processed_image),
         )

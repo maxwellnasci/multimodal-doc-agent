@@ -1,5 +1,6 @@
 from doc_agent.schemas.common import DocumentType
 from doc_agent.schemas.envelope import (
+    CostSource,
     DocumentData,
     ExtractionEnvelope,
     ExtractionStatus,
@@ -19,6 +20,7 @@ SCHEMA_BY_TYPE: dict[DocumentType, type[DocumentData]] = {
 
 __all__ = [
     "SCHEMA_BY_TYPE",
+    "CostSource",
     "DocumentData",
     "DocumentType",
     "ExtractionEnvelope",

@@ -10,6 +10,7 @@ from PIL import Image
 from doc_agent.extractor import ExtractorError, MockExtractorClient
 from doc_agent.pipeline import (
     DocumentPipeline,
+    ModelPricing,
     build_token_usage,
     completeness,
     detect_image_mime,
@@ -18,6 +19,7 @@ from doc_agent.pipeline import (
 )
 from doc_agent.samples import render_sample_image
 from doc_agent.schemas import (
+    CostSource,
     DocumentType,
     ExtractionEnvelope,
     ExtractionStatus,
@@ -53,7 +55,9 @@ def test_happy_path_for_every_document_type(doc_type):
     assert envelope.latency_ms == 125.0
     assert envelope.model == "mock/deterministic"
     assert envelope.usage.total_tokens == 330
-    assert envelope.usage.estimated_cost_usd > 0
+    # Mock não informa custo e nenhum preço foi configurado: nada de custo inventado.
+    assert envelope.usage.estimated_cost_usd is None
+    assert envelope.usage.cost_source is CostSource.UNKNOWN
     assert envelope.raw_response is not None
 
 
@@ -119,19 +123,49 @@ def test_preprocess_image_applies_exif_orientation_before_downscale(orientation,
         assert green < 80
 
 
-def test_build_token_usage_calculates_cost():
+PRICING = ModelPricing(prompt_usd_per_1m=0.30, completion_usd_per_1m=0.80)
+
+
+def test_build_token_usage_estimates_cost_from_configured_pricing():
     usage = build_token_usage(
         {"prompt_tokens": 1000, "completion_tokens": 500},
+        pricing=PRICING,
         image_bytes_original=50000,
         image_bytes_sent=15000,
     )
     assert usage.total_tokens == 1500
     assert usage.estimated_cost_usd == pytest.approx(0.0007)
+    assert usage.cost_source is CostSource.ESTIMATED
     assert usage.image_bytes_original == 50000
     assert usage.image_bytes_sent == 15000
 
-    explicit = build_token_usage({"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.012345})
-    assert explicit.estimated_cost_usd == pytest.approx(0.012345)
+
+def test_build_token_usage_prefers_provider_cost_over_pricing():
+    usage = build_token_usage(
+        {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.012345}, pricing=PRICING
+    )
+    assert usage.estimated_cost_usd == pytest.approx(0.012345)
+    assert usage.cost_source is CostSource.PROVIDER
+
+
+@pytest.mark.parametrize("usage", [None, {}, {"prompt_tokens": 1000, "completion_tokens": 500}])
+def test_build_token_usage_without_cost_or_pricing_is_unknown(usage):
+    result = build_token_usage(usage)
+    assert result.estimated_cost_usd is None
+    assert result.cost_source is CostSource.UNKNOWN
+
+
+def test_build_token_usage_without_usage_does_not_estimate_zero():
+    result = build_token_usage(None, pricing=PRICING)
+    assert result.estimated_cost_usd is None
+    assert result.cost_source is CostSource.UNKNOWN
+
+
+def test_pipeline_applies_configured_pricing():
+    pipeline = DocumentPipeline(MockExtractorClient(), pricing=PRICING)
+    envelope = pipeline.run(render_sample_image(DocumentType.INVOICE), DocumentType.INVOICE)
+    assert envelope.usage.cost_source is CostSource.ESTIMATED
+    assert envelope.usage.estimated_cost_usd == pytest.approx((250 * 0.30 + 80 * 0.80) / 1e6)
 
 
 def test_envelope_round_trips_through_json():

@@ -14,8 +14,9 @@ from doc_agent.extractor import (
     OpenRouterNemotronExtractor,
 )
 from doc_agent.extractor.prompts import build_user_prompt, infer_document_type, parse_json_payload
-from doc_agent.samples import SAMPLE_PAYLOADS
-from doc_agent.schemas import DocumentType
+from doc_agent.pipeline import DocumentPipeline, ModelPricing
+from doc_agent.samples import SAMPLE_PAYLOADS, render_sample_image
+from doc_agent.schemas import CostSource, DocumentType
 
 # --- Mock ----------------------------------------------------------------------------------
 
@@ -252,3 +253,21 @@ def test_openrouter_accepts_content_parts(png_bytes):
         png_bytes, "image/png", DocumentType.INVOICE
     )
     assert result.payload == {"a": 1}
+
+
+def test_openrouter_cost_reaches_envelope_as_provider_cost():
+    body = completion(json.dumps(SAMPLE_PAYLOADS[DocumentType.VEHICLE]))
+    # Formato do OpenRouter: usage.cost (em créditos = USD) vem em toda resposta.
+    body["usage"] = {
+        "prompt_tokens": 1200,
+        "completion_tokens": 90,
+        "total_tokens": 1290,
+        "cost": 0.000417,
+    }
+    extractor = make_extractor(lambda _: httpx.Response(200, json=body))
+    pipeline = DocumentPipeline(extractor, pricing=ModelPricing(99.0, 99.0))  # deve ser ignorado
+
+    usage = pipeline.run(render_sample_image(DocumentType.VEHICLE), DocumentType.VEHICLE).usage
+    assert usage.cost_source is CostSource.PROVIDER
+    assert usage.estimated_cost_usd == pytest.approx(0.000417)
+    assert usage.total_tokens == 1290

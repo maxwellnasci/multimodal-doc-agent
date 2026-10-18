@@ -5,9 +5,10 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from doc_agent.app import format_cost
 from doc_agent.pipeline import detect_image_mime
 from doc_agent.samples import render_sample_image
-from doc_agent.schemas import DocumentType
+from doc_agent.schemas import CostSource, DocumentType, TokenUsage
 
 APP_PATH = Path(__file__).parents[1] / "src" / "doc_agent" / "app.py"
 
@@ -40,9 +41,21 @@ def test_app_extracts_embedded_example(app, doc_type):
     assert metrics["Status"] == "✅ Aprovado"
     assert metrics["Confiança"] == "100%"
     assert "Latência" in metrics
-    assert "Custo FinOps" in metrics
+    assert metrics["Custo FinOps"] == "—"  # mock não informa custo
     expected_type = DocumentType.INVOICE if doc_type is DocumentType.AUTO else doc_type
     assert app.session_state["envelope"].document_type is expected_type
+
+
+@pytest.mark.parametrize(
+    ("cost", "source", "expected"),
+    [
+        (0.0012345, CostSource.PROVIDER, "$0.00123"),
+        (0.0012345, CostSource.ESTIMATED, "~$0.00123 (estimado)"),
+        (None, CostSource.UNKNOWN, "—"),
+    ],
+)
+def test_format_cost_distinguishes_cost_source(cost, source, expected):
+    assert format_cost(TokenUsage(estimated_cost_usd=cost, cost_source=source)) == expected
 
 
 def test_app_openrouter_without_key_shows_error(app):

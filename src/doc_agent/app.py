@@ -15,7 +15,13 @@ from doc_agent.extractor import (
 )
 from doc_agent.pipeline import DocumentPipeline
 from doc_agent.samples import render_sample_image
-from doc_agent.schemas import DocumentType, ExtractionEnvelope, ExtractionStatus
+from doc_agent.schemas import (
+    CostSource,
+    DocumentType,
+    ExtractionEnvelope,
+    ExtractionStatus,
+    TokenUsage,
+)
 
 DOC_LABELS = {
     DocumentType.PRESCRIPTION: "👓 Receita oftalmológica",
@@ -74,17 +80,21 @@ def render_sidebar() -> tuple[str, str, str, DocumentType]:
     return provider, api_key, model, document_type
 
 
+def format_cost(usage: TokenUsage) -> str:
+    if usage.estimated_cost_usd is None:
+        return "—"
+    cost = f"${usage.estimated_cost_usd:.5f}"
+    return f"~{cost} (estimado)" if usage.cost_source is CostSource.ESTIMATED else cost
+
+
 def render_result(envelope: ExtractionEnvelope) -> None:
     cols = st.columns(5)
     cols[0].metric("Status", STATUS_LABELS[envelope.status])
     cols[1].metric("Confiança", f"{envelope.confidence:.0%}")
     cols[2].metric("Latência", f"{envelope.latency_ms:,.0f} ms")
     cols[3].metric("Alertas", f"{len(envelope.errors)} erros · {len(envelope.warnings)} avisos")
-    cols[4].metric(
-        "Custo FinOps",
-        f"${envelope.usage.estimated_cost_usd:.5f}",
-        f"{envelope.usage.total_tokens} tok",
-    )
+    usage = envelope.usage
+    cols[4].metric("Custo FinOps", format_cost(usage), f"{usage.total_tokens} tok")
 
     data_tab, issues_tab, raw_tab = st.tabs(["Dados extraídos", "Guardrails", "Resposta bruta"])
     with data_tab:
