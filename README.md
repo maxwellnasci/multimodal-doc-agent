@@ -1,5 +1,11 @@
 # multimodal-doc-agent
 
+![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white)
+![Testes](https://img.shields.io/badge/tests-292%20passed-brightgreen)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+![NVIDIA Nemotron 3.5 Super VL](https://img.shields.io/badge/NVIDIA-Nemotron%203.5%20Super%20VL-76B900?logo=nvidia&logoColor=white)
+[![Licença MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 Agente de extração estruturada de documentos brasileiros — **receitas oftalmológicas**, **CRLV** e
 **notas fiscais** — usando visão multimodal (NVIDIA Nemotron VL via OpenRouter), **Pydantic v2** e
 **guardrails determinísticos**.
@@ -23,9 +29,42 @@ imagem ─► DocumentPipeline ─► ExtractorClient (porta)
 | `extractor/` | Porta `ExtractorClient`, adapter OpenRouter (retries, parsing robusto de JSON) e mock |
 | `pipeline.py` | Orquestração, validação da imagem por magic bytes e score de confiança |
 | `app.py` | Interface Streamlit com upload, exemplos embutidos, métricas e download do JSON |
+| `scripts/benchmark_live.py` | Benchmark pago contra o modelo real: AUTO × específico, campo a campo contra o gabarito |
 
-**Score de confiança** = completude dos campos críticos − 0,25 por erro − 0,05 por aviso.
-Status `ok` exige zero erros e confiança ≥ 0,8; senão `needs_review`. Falha de schema/extrator → `failed`.
+## Defesa anti-alucinação em 3 camadas
+
+Um modelo de visão pode devolver um JSON bem formado com valores inventados ou mal lidos. Nenhum
+valor chega ao envelope como `ok` sem passar por três camadas determinísticas:
+
+1. **Schema Pydantic v2** — tipos estritos e normalização de formatos brasileiros (datas
+   `dd/mm/aaaa`, `R$ 1.234,56`, dioptrias com vírgula, placas, CPF/CNPJ). `NaN`/`Infinity` são
+   rejeitados, e quantidades (`1.500` = 1,5) são tratadas separadamente de valores em reais
+   (`R$ 1.500` = 1500). Campo com tipo errado → `failed`, com o caminho do campo no erro.
+2. **Guardrails de domínio** — dígitos verificadores (CPF, CNPJ numérico e alfanumérico, RENAVAM,
+   chave NF-e), formatos (placa Mercosul/antiga, VIN ISO 3779), regras clínicas (passo de 0,25 D,
+   faixas de grau, eixo 0–180°, cilindro exige eixo) e fiscais (soma dos itens = total,
+   quantidade × unitário = total do item), além de coerência temporal (datas futuras, ano modelo
+   × fabricação).
+3. **Score de confiança e revisão humana** — completude dos campos críticos − 0,25 por erro −
+   0,05 por aviso. Status `ok` exige zero erros e confiança ≥ 0,8; senão o documento vai para
+   `needs_review` em vez de ser aceito. Falha de schema ou do extrator → `failed`.
+
+As camadas pegam valores **impossíveis ou inconsistentes**. Um valor plausível e bem formado,
+mas errado (um nome trocado, por exemplo), passa por elas; por isso o status `needs_review` e a
+resposta bruta no envelope existem para auditoria.
+
+### Validação cruzada da NF-e
+
+A chave de acesso de 44 posições é decomposta (cUF, AAMM, CNPJ/CPF do emitente, modelo, série,
+número) e conferida contra os campos lidos no DANFE:
+
+- **DV da chave** pelo módulo 11 sobre `ASCII − 48`, como manda a NT 2025.001, aceitando o
+  **CNPJ alfanumérico** só nas 12 posições da raiz;
+- **emitente** da chave = emitente extraído (inclusive `000` + CPF de produtor rural), e o
+  CNPJ/CPF da chave precisa ser válido mesmo quando o emitente não foi extraído;
+- **AAMM** da chave = mês/ano de emissão; **número** e **série** da chave = os da nota.
+
+Qualquer divergência vira erro ou aviso com o valor da chave e o valor lido lado a lado.
 
 ## Uso
 
@@ -55,11 +94,55 @@ passe os preços do modelo: `DocumentPipeline(extractor, pricing=ModelPricing(0.
 (USD por 1M de tokens de entrada/saída, `cost_source="estimated"`). Sem nenhum dos dois, o
 custo fica `None` (`cost_source="unknown"`) em vez de um valor inventado.
 
+## Benchmark real (Nemotron 3.5 Super VL via OpenRouter)
+
+Execução de 18/10/2026 com `nvidia/nemotron-3.5-super-vl` sobre as três amostras sintéticas do
+projeto. Cada campo extraído foi comparado com o gabarito (`SAMPLE_PAYLOADS`). Os custos são os
+informados pelo próprio OpenRouter em `usage.cost` de cada resposta.
+
+| Amostra | Modo | Tipo detectado | Campos certos | Tokens (entrada + saída) | Custo (USD) |
+| --- | --- | --- | --- | --- | --- |
+| Receita oftalmológica | AUTO | ✅ prescription | **13/13** | 2.932 + 1.291 | 0,00081 |
+| CRLV | AUTO | ✅ vehicle_document | **11/11** | 2.932 + 587 | 0,00053 |
+| Nota fiscal (DANFE) | AUTO | ✅ invoice | **17/17** | 2.933 + 2.524 | 0,00130 |
+| Receita oftalmológica | Específico | — | **13/13** | 1.411 + 1.023 | 0,00072 |
+| CRLV | Específico | — | **11/11** | 1.368 + 1.118 | 0,00058 |
+| Nota fiscal (DANFE) | Específico | — | **17/17** | 1.554 + 3.132 | 0,00430¹ |
+
+- **41/41 campos corretos nos dois modos**; o modo AUTO identificou o tipo e respondeu no formato
+  discriminado `{"document_type", "data"}` nas três amostras.
+- O modo AUTO usa ~1.450 tokens de entrada a mais (o schema dos três tipos vai no prompt),
+  cerca de US$ 0,00015 por chamada. O custo é dominado pelos tokens de saída, que variam bastante
+  entre execuções da mesma imagem.
+- ¹ Custo ~3× acima do preço de tabela para os mesmos tokens; provavelmente o OpenRouter
+  roteou essa chamada para outro provedor. É o valor cobrado, por isso é ele que aparece.
+
+**Limites:** uma chamada por caso, em imagens sintéticas e limpas. O resultado não vale como
+estimativa de precisão para fotos reais (inclinação, sombra, reflexo, baixa resolução).
+
+Para reproduzir (faz chamadas pagas, cerca de US$ 0,01 no total):
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+python scripts/benchmark_live.py --output resultados.json
+```
+
+O script sai com código 1 se algum campo divergir do gabarito e 2 se não houver chave.
+
 ## Qualidade
 
 ```bash
 pytest --cov=doc_agent
-ruff check src tests && ruff format --check src tests
+ruff check . && ruff format --check .
 ```
 
+A suíte roda sem rede (o OpenRouter é simulado com `httpx.MockTransport`) e passa no Python 3.11,
+3.12 e 3.13.
+
 Todos os dados de exemplo são fictícios (com dígitos verificadores válidos).
+
+## Licença
+
+Código sob a [licença MIT](LICENSE). A fonte DejaVu Sans, usada para renderizar as amostras,
+é distribuída sob a licença própria em
+[`src/doc_agent/assets/fonts/LICENSE-DejaVu.txt`](src/doc_agent/assets/fonts/LICENSE-DejaVu.txt).
