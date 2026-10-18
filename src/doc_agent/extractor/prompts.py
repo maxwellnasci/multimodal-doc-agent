@@ -21,7 +21,8 @@ DOCUMENT_HINTS: dict[DocumentType, str] = {
     ),
     DocumentType.INVOICE: (
         "Nota fiscal brasileira (DANFE/NF-e). Extraia emitente, destinatário, chave de acesso "
-        "de 44 dígitos, cada item com quantidade, valor unitário e total, e o valor total da nota."
+        "de 44 caracteres (copie letras do CNPJ alfanumérico como estão), cada item com "
+        "quantidade, valor unitário e total, e o valor total da nota."
     ),
     DocumentType.AUTO: (
         "Identifique automaticamente o tipo de documento brasileiro na imagem "

@@ -168,7 +168,7 @@ def test_invoice_access_key_cross_validation_mismatches(invoice_payload):
 def _nfe_key(issuer_field: str) -> str:
     """Chave NF-e com DV válido: SP, 10/2026, modelo 55, série 1, nNF 12345."""
     base = f"352610{issuer_field}55001000012345100012345"
-    total = sum(int(d) * (2 + i % 8) for i, d in enumerate(reversed(base)))
+    total = sum((ord(c) - 48) * (2 + i % 8) for i, c in enumerate(reversed(base)))
     remainder = total % 11
     return base + str(0 if remainder < 2 else 11 - remainder)
 
@@ -180,6 +180,22 @@ def test_invoice_rural_producer_cpf_matches_zero_padded_key(invoice_payload):
 
 def test_invoice_rural_producer_cpf_mismatch_is_flagged(invoice_payload):
     invoice_payload.update(issuer_document="529.982.247-25", access_key=_nfe_key("00011144477735"))
+    issues = run_guardrails(InvoiceData.model_validate(invoice_payload))
+    assert codes(issues) == {("access_key", "access_key_cnpj_mismatch")}
+
+
+def test_invoice_alphanumeric_cnpj_key_matches_issuer(invoice_payload):
+    invoice_payload.update(
+        issuer_document="12.ABC.345/01DE-35",
+        access_key="3526 1012AB C345 01DE 3555 0010 0001 2345 1000 1234 51",
+    )
+    data = InvoiceData.model_validate(invoice_payload)
+    assert data.access_key == _nfe_key("12ABC34501DE35")
+    assert run_guardrails(data) == []
+
+
+def test_invoice_alphanumeric_cnpj_key_mismatch_is_flagged(invoice_payload):
+    invoice_payload.update(access_key=_nfe_key("12ABC34501DE35"))  # emitente: 11222333000181
     issues = run_guardrails(InvoiceData.model_validate(invoice_payload))
     assert codes(issues) == {("access_key", "access_key_cnpj_mismatch")}
 

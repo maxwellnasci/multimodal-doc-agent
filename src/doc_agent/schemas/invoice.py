@@ -7,6 +7,7 @@ from typing import ClassVar
 from pydantic import Field
 
 from doc_agent.schemas.common import (
+    AccessKey,
     BRDate,
     Digits,
     DocumentModel,
@@ -35,7 +36,10 @@ class InvoiceData(DocumentModel):
 
     invoice_number: Digits = Field(default=None, description="Número da nota")
     series: Digits = Field(default=None, description="Série")
-    access_key: Digits = Field(default=None, description="Chave de acesso NF-e, 44 dígitos")
+    access_key: AccessKey = Field(
+        default=None,
+        description="Chave de acesso NF-e, 44 caracteres (o CNPJ nela pode conter letras)",
+    )
     issue_date: BRDate = Field(default=None, description="Data de emissão")
     issuer_name: OptionalStr = Field(default=None, description="Razão social do emitente")
     issuer_document: DocumentNumber = Field(default=None, description="CNPJ do emitente")

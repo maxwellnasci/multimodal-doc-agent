@@ -83,6 +83,11 @@ def test_money_parsing(raw, expected):
     assert InvoiceData(total_amount=raw).total_amount == Decimal(expected)
 
 
+def test_access_key_keeps_cnpj_letters_and_drops_separators():
+    data = InvoiceData(access_key="3526.1012.abc3.4501.de35-5500 1000 0123 4510 0012 3451")
+    assert data.access_key == "35261012ABC34501DE35550010000123451000123451"
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [

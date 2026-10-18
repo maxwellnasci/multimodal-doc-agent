@@ -15,7 +15,8 @@ RENAVAM_RE = re.compile(r"^[0-9]{11}$")
 CPF_RE = re.compile(r"^[0-9]{11}$")
 # CNPJ alfanumérico (IN RFB 2.229/2024): 12 posições [0-9A-Z] + 2 DVs numéricos.
 CNPJ_RE = re.compile(r"^[0-9A-Z]{12}[0-9]{2}$")
-NFE_KEY_RE = re.compile(r"^[0-9]{44}$")
+# Chave DF-e (NT 2025.001): letras só nas 12 primeiras posições do CNPJ (7ª a 18ª).
+NFE_KEY_RE = re.compile(r"^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$")
 
 DIOPTER_STEP = Decimal("0.25")
 AXIS_MIN, AXIS_MAX = 0, 180
@@ -116,19 +117,19 @@ def is_valid_tax_id(value: str | None) -> bool:
 
 
 def is_valid_nfe_access_key(key: str | None) -> bool:
-    """Chave de acesso NF-e: 44 dígitos, DV módulo 11 com pesos 2..9 da direita para a esquerda."""
+    """Chave NF-e de 44 posições: DV módulo 11 (pesos 2..9 da direita) sobre ASCII - 48."""
     if not key:
         return False
     digits = _clean(key)
     if not NFE_KEY_RE.fullmatch(digits) or len(set(digits)) == 1:
         return False
-    total = sum(int(d) * (2 + i % 8) for i, d in enumerate(reversed(digits[:43])))
+    total = sum((ord(c) - 48) * (2 + i % 8) for i, c in enumerate(reversed(digits[:43])))
     remainder = total % 11
     return (0 if remainder < 2 else 11 - remainder) == int(digits[43])
 
 
 def parse_nfe_access_key(key: str | None) -> NFeAccessKeyInfo | None:
-    """Decompõe os 44 dígitos da chave NF-e (cUF, AAMM, CNPJ, mod, série, nNF)."""
+    """Decompõe as 44 posições da chave NF-e (cUF, AAMM, CNPJ, mod, série, nNF)."""
     if not is_valid_nfe_access_key(key):
         return None
     assert key is not None

@@ -150,3 +150,5 @@ Axis = Annotated[int | None, BeforeValidator(parse_axis)]
 DocumentNumber = Annotated[str | None, BeforeValidator(normalize_document_number)]
 Code = Annotated[str | None, BeforeValidator(normalize_code)]
 Digits = Annotated[str | None, BeforeValidator(digits_only)]
+# Chave NF-e: mantém letras porque o CNPJ alfanumérico entra na chave (NT 2025.001).
+AccessKey = Annotated[str | None, BeforeValidator(normalize_document_number)]

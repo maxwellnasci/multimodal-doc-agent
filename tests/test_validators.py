@@ -134,6 +134,32 @@ def test_nfe_access_key():
     assert v.parse_nfe_access_key("0" * 44) is None
 
 
+# DV calculado com o exemplo oficial em VB.NET (NT 2025.001, Anexo II).
+ALFA_KEY = "35261012ABC34501DE35550010000123451000123451"
+
+
+def test_nfe_access_key_with_alphanumeric_cnpj():
+    assert v.is_valid_nfe_access_key(ALFA_KEY)
+    assert v.is_valid_nfe_access_key(ALFA_KEY.lower())
+    assert not v.is_valid_nfe_access_key(ALFA_KEY[:-1] + "2")
+    assert v.parse_nfe_access_key(ALFA_KEY).issuer_cnpj == "12ABC34501DE35"
+
+
+@pytest.mark.parametrize(
+    "position",
+    [
+        0,  # cUF
+        5,  # AAMM
+        18,  # DV do CNPJ é sempre numérico
+        20,  # modelo
+        43,  # DV da chave
+    ],
+)
+def test_nfe_access_key_rejects_letters_outside_cnpj_root(position):
+    key = ALFA_KEY[:position] + "A" + ALFA_KEY[position + 1 :]
+    assert not v.is_valid_nfe_access_key(key)
+
+
 @pytest.mark.parametrize(
     ("value", "valid"),
     [
