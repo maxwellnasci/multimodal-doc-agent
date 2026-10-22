@@ -48,8 +48,26 @@ def test_sample_lines_fit_inside_the_frame(doc_type):
 
 @pytest.fixture
 def app(monkeypatch) -> AppTest:
+    monkeypatch.setenv("DOC_AGENT_ENV", "development")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     return AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+
+
+def test_app_fails_closed_in_production_without_key(monkeypatch):
+    monkeypatch.delenv("DOC_AGENT_ENV", raising=False)  # padrão = production
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    app = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+    assert app.exception
+    assert "OPENROUTER_API_KEY" in app.exception[0].value
+    assert not app.button  # nenhuma UI de extração renderizada
+
+
+def test_app_in_production_offers_only_openrouter(monkeypatch):
+    monkeypatch.setenv("DOC_AGENT_ENV", "production")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-env")
+    app = AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+    assert not app.exception
+    assert app.sidebar.radio[0].options == ["OpenRouter · Nemotron VL"]
 
 
 def test_app_renders_with_mock_by_default(app):

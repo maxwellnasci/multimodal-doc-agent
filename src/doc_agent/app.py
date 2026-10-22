@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import os
-
 import streamlit as st
 
 from doc_agent.extractor import (
-    DEFAULT_MODEL,
     ExtractorClient,
+    ExtractorConfigError,
     ExtractorError,
     MockExtractorClient,
     OpenRouterNemotronExtractor,
@@ -22,6 +20,7 @@ from doc_agent.schemas import (
     ExtractionStatus,
     TokenUsage,
 )
+from doc_agent.settings import Settings, load_settings
 
 DOC_LABELS = {
     DocumentType.PRESCRIPTION: "👓 Receita oftalmológica",
@@ -49,30 +48,41 @@ div[data-testid="stMetric"] {
 """
 
 
-def build_extractor(provider: str, api_key: str, model: str) -> ExtractorClient:
+def build_extractor(settings: Settings, provider: str, api_key: str, model: str) -> ExtractorClient:
     if provider == PROVIDER_OPENROUTER:
-        return OpenRouterNemotronExtractor(api_key=api_key or None, model=model or None)
+        if model not in settings.allowed_models:
+            raise ExtractorConfigError(f"modelo não permitido: {model}")
+        return OpenRouterNemotronExtractor(api_key=api_key or settings.api_key, model=model)
+    if not settings.mock_enabled:
+        raise ExtractorConfigError("mock disponível só com DOC_AGENT_ENV=development")
     return MockExtractorClient()
 
 
-def render_sidebar() -> tuple[str, str, str, DocumentType]:
+def render_sidebar(settings: Settings) -> tuple[str, str, str, DocumentType]:
     with st.sidebar:
         st.header("Configuração")
-        has_env_key = bool(os.environ.get("OPENROUTER_API_KEY"))
+        has_env_key = settings.api_key is not None
+        providers = (
+            [PROVIDER_MOCK, PROVIDER_OPENROUTER] if settings.mock_enabled else [PROVIDER_OPENROUTER]
+        )
         provider = st.radio(
             "Provedor",
-            [PROVIDER_MOCK, PROVIDER_OPENROUTER],
-            index=1 if has_env_key else 0,
+            providers,
+            index=len(providers) - 1 if has_env_key else 0,
             help="O mock devolve dados fixos — ideal para demo sem chave de API.",
         )
-        api_key, model = "", DEFAULT_MODEL
+        api_key, model = "", settings.default_model
         if provider == PROVIDER_OPENROUTER:
             api_key = st.text_input(
                 "OPENROUTER_API_KEY",
                 type="password",
                 placeholder="usando variável de ambiente" if has_env_key else "sk-or-...",
             )
-            model = st.text_input("Modelo", value=os.environ.get("DOC_AGENT_MODEL", DEFAULT_MODEL))
+            model = st.selectbox(
+                "Modelo",
+                settings.allowed_models,
+                index=settings.allowed_models.index(settings.default_model),
+            )
         document_type = st.selectbox(
             "Tipo de documento", list(DocumentType), format_func=DOC_LABELS.__getitem__
         )
@@ -121,6 +131,7 @@ def render_result(envelope: ExtractionEnvelope) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Multimodal Doc Agent", page_icon="🧾", layout="wide")
+    settings = load_settings()  # fail-closed: ConfigError interrompe a página antes da UI
     st.markdown(CSS, unsafe_allow_html=True)
     st.markdown(
         '<div class="hero"><h1>Multimodal Doc Agent</h1>'
@@ -128,7 +139,7 @@ def main() -> None:
         "Pydantic v2 e guardrails determinísticos.</p></div>",
         unsafe_allow_html=True,
     )
-    provider, api_key, model, document_type = render_sidebar()
+    provider, api_key, model, document_type = render_sidebar(settings)
 
     source = st.radio("Origem da imagem", ["Exemplo embutido", "Upload"], horizontal=True)
     image: bytes | None = None
@@ -150,7 +161,7 @@ def main() -> None:
     with right:
         if st.button("Extrair dados", type="primary", disabled=not image):
             try:
-                extractor = build_extractor(provider, api_key, model)
+                extractor = build_extractor(settings, provider, api_key, model)
             except ExtractorError as exc:
                 st.error(str(exc))
             else:
@@ -168,4 +179,5 @@ def main() -> None:
             render_result(envelope)
 
 
-main()
+if __name__ == "__main__":  # o Streamlit executa o script como __main__; import não sobe a UI
+    main()

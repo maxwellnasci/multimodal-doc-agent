@@ -119,11 +119,21 @@ Qualquer divergência vira erro ou aviso com o valor da chave e o valor lido lad
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 
-streamlit run src/doc_agent/app.py        # demo (mock por padrão)
+# Local, sem chave de API (mock determinístico):
+export DOC_AGENT_ENV=development
+streamlit run src/doc_agent/app.py
 
+# Com o modelo real:
 cp .env.example .env                       # preencha OPENROUTER_API_KEY
 set -a && source .env && set +a            # o projeto lê variáveis de ambiente, não o arquivo
+python -m doc_agent.settings && streamlit run src/doc_agent/app.py
 ```
+
+**Fail-closed:** sem `DOC_AGENT_ENV`, o app assume `production`. Nesse modo, ele se recusa a
+subir sem `OPENROUTER_API_KEY` e o mock fica desabilitado, para que um deploy com o secret mal
+configurado não exiba dados fictícios como "Aprovado". O mock exige
+`DOC_AGENT_ENV=development` explícito. `python -m doc_agent.settings` valida a configuração e
+sai com código 1 se algo estiver errado; use no entrypoint do container.
 
 ```python
 from doc_agent.extractor import OpenRouterNemotronExtractor
@@ -136,6 +146,8 @@ print(envelope.model_dump_json(indent=2))
 ```
 
 O modelo padrão é `nvidia/nemotron-3.5-super-vl` e pode ser trocado via `DOC_AGENT_MODEL`.
+Na UI, só são aceitos os modelos de `DOC_AGENT_ALLOWED_MODELS` (lista separada por vírgula;
+padrão: apenas o modelo padrão). Assim, um visitante não escolhe um modelo caro pago pela sua chave.
 
 **Custo (FinOps):** `envelope.usage.estimated_cost_usd` vem do `usage.cost` que o OpenRouter
 devolve em toda resposta (`cost_source="provider"`). Para provedores que não informam custo,
